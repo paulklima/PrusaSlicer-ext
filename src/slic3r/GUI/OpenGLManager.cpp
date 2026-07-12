@@ -530,6 +530,16 @@ wxGLContext* OpenGLManager::init_glcontext(wxGLCanvas& canvas, const std::pair<i
     return m_context;
 }
 
+void OpenGLManager::prefer_glx_if_x11()
+{
+#if defined(__WXGTK__) && wxCHECK_VERSION(3,3,2)
+    // wx 3.3.2: runtime GLX/EGL selection. Use GLX on X11 (more mature),
+    // EGL on Wayland (required). Must be called before any wxGLCanvas creation.
+    if (!wxGetenv("WAYLAND_DISPLAY") || wxString(wxGetenv("WAYLAND_DISPLAY")).IsEmpty())
+        wxGLCanvas::PreferGLX();
+#endif
+}
+
 wxGLCanvas* OpenGLManager::create_wxglcanvas(wxWindow& parent, bool enable_auto_aa_samples)
 {
     wxGLAttributes attribList;

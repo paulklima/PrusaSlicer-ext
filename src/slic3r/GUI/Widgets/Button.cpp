@@ -46,7 +46,7 @@ Button::Button(wxWindow* parent, wxString text, wxString icon, long style, wxSiz
 bool Button::Create(wxWindow* parent, wxString text, wxString icon, long style, wxSize iconSize/* = wxSize(16, 16)*/)
 {
     StaticBox::Create(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, style);
-    state_handler.attach({&text_color});
+    state_handler.attach(std::vector<StateColor const*>{&text_color});
     state_handler.update_binds();
     wxWindow::SetLabel(text);
     if (!icon.IsEmpty()) {
