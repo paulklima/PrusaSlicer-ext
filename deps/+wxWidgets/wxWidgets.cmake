@@ -1,6 +1,6 @@
 set(_wx_toolkit "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    option(DEP_WX_GTK3 "Build wxWidgets for GTK3 instead of GTK2" OFF)
+    option(DEP_WX_GTK3 "Build wxWidgets for GTK3 instead of GTK2" ON)
 
     set(_gtk_ver 2)
     if (DEP_WX_GTK3)
@@ -51,7 +51,7 @@ add_cmake_project(wxWidgets
         -DwxUSE_EXPAT=sys
         -DwxUSE_LIBSDL=OFF
         -DwxUSE_XTEST=OFF
-        -DwxUSE_GLCANVAS_EGL=OFF
+        -DwxUSE_GLCANVAS_EGL=ON
         -DwxUSE_WEBREQUEST=OFF
         ${_wx_webview}
         ${_wx_secretstore}
