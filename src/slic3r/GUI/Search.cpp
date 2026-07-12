@@ -250,7 +250,7 @@ bool OptionsSearcher::search(const std::string& search, bool force/* = false*/)
 
     auto get_tooltip = [this, &sep](const Option& opt) -> wxString
     {
-        return  marker_by_type(opt.type, printer_technology) +
+        return  wxString(marker_by_type(opt.type, printer_technology)) +
                 opt.category_local + sep +
                 opt.group_local + sep + opt.label_local;
     };
