@@ -45,7 +45,7 @@ public:
     std::string finalize(GCodeGenerator &gcodegen);
     std::vector<float> used_filament_length() const;
     std::optional<WipeTower::ToolChangeResult> get_toolchange(std::size_t index, bool ignore_sparse) const {
-        if (m_layer_idx >= m_tool_changes.size()) {
+        if (m_layer_idx >= int(m_tool_changes.size())) {
             return std::nullopt;
         }
         if(
