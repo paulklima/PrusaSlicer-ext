@@ -3083,7 +3083,7 @@ wxDataViewItemArray ObjectList::add_volumes_to_object_in_list(size_t obj_idx, st
 void ObjectList::add_object_to_list(size_t obj_idx, bool call_selection_changed)
 {
     auto model_object = (*m_objects)[obj_idx];
-    const wxString& item_name = get_item_name(model_object->name, model_object->is_text());
+    const wxString item_name = get_item_name(model_object->name, model_object->is_text());
     const int effective_extruder = effective_extruder_for_object_row(*model_object);
     const auto item = m_objects_model->AddObject(item_name,
                       extruder2str(effective_extruder),

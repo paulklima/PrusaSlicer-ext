@@ -1732,7 +1732,7 @@ void SliderCtrl::BUILD()
 	m_slider->Bind(wxEVT_SLIDER, ([this](wxCommandEvent e) {
 		if (!m_disable_change_event) {
 			int val = boost::any_cast<int>(get_value());
-			m_textctrl->SetLabel(wxString::Format("%d", val));
+			m_textctrl->ChangeValue(wxString::Format("%d", val));
 			on_change_field();
 		}
 	}), m_slider->GetId());
@@ -1756,7 +1756,7 @@ void SliderCtrl::set_value(const boost::any& value, bool change_event)
 
 	m_slider->SetValue(boost::any_cast<int>(value)*m_scale);
 	int val = boost::any_cast<int>(get_value());
-	m_textctrl->SetLabel(wxString::Format("%d", val));
+	m_textctrl->ChangeValue(wxString::Format("%d", val));
 
 	m_disable_change_event = false;
 }
