@@ -53,9 +53,9 @@ bool has_full_config_from_profiles(const Data& cli)
 {
     const DynamicPrintConfig& input = cli.input_config;
     return  !has_profile_sharing_action(cli) &&
-           (input.has("print-profile") && !input.opt_string("print-profile").empty() ||
-            input.has("material-profile") && !input.option<ConfigOptionStrings>("material-profile")->values.empty() ||
-            input.has("printer-profile") && !input.opt_string("printer-profile").empty());
+           ((input.has("print-profile") && !input.opt_string("print-profile").empty()) ||
+            (input.has("material-profile") && !input.option<ConfigOptionStrings>("material-profile")->values.empty()) ||
+            (input.has("printer-profile") && !input.opt_string("printer-profile").empty()));
 }
 
 bool process_profiles_sharing(const Data& cli)

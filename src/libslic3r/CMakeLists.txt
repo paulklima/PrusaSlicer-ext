@@ -680,6 +680,16 @@ if (APPLE)
     target_compile_options(libslic3r_cgal PUBLIC "-fno-aligned-allocation")
 endif ()
 
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Config.hpp's ConfigOption classes carry a Cereal serialize(Archive&) hook
+    # whose name collides with the virtual ConfigOption::serialize(). GCC 13+
+    # (-Woverloaded-virtual, on by default) reports the base virtual as "hidden"
+    # in every TU that includes Config.hpp -> thousands of false positives.
+    # The two functions have unrelated signatures; dispatch and Cereal both work.
+    # PUBLIC so GUI/other consumers of the public Config.hpp header are silenced too.
+    target_compile_options(libslic3r PUBLIC "-Wno-overloaded-virtual")
+endif ()
+
 if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)
     add_precompiled_header(libslic3r pchheader.hpp FORCEINCLUDE)
 endif ()

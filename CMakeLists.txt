@@ -520,7 +520,6 @@ foreach(po_file ${L10N_PO_FILES})
             COMMAND msgmerge -N -o ${po_file} ${po_file} "${L10N_DIR}/PrusaSlicer.pot"
             # delete obsolete lines from resulting PO to avoid conflicts after a merging of it with wxWidgets.po
             COMMAND msgattrib --no-obsolete -o ${po_file} ${po_file}
-            DEPENDS ${po_file}
         )
     endif()
 endforeach()
@@ -540,7 +539,6 @@ foreach(po_file ${L10N_PO_FILES})
         COMMAND msgcat --use-first -o ${po_file} ${po_file} ${wx_po_file}
         # delete obsolete lines from resulting PO
         COMMAND msgattrib --no-obsolete -o ${po_file} ${po_file}
-        DEPENDS ${po_file}
     )
 endforeach()
 
@@ -556,7 +554,6 @@ foreach(po_file ${L10N_PO_FILES})
         TARGET gettext_po_to_mo PRE_BUILD
         COMMAND msgfmt ARGS --check-format -o ${mo_file} ${po_file}
         #COMMAND msgfmt ARGS --check-compatibility -o ${mo_file} ${po_file}
-        DEPENDS ${po_file}
     )
 endforeach()
 
