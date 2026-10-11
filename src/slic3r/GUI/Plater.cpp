@@ -3372,10 +3372,10 @@ void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
             warning_steps.clear();
             if (flags == PrintBase::SlicingStatus::UPDATE_PRINT_STEP_WARNINGS) {
                 int i = 0;
-                while (i < int(printer_technology == ptFFF ? psCount : slapsCount)) { warning_steps.push_back(i); ++i; }
+                while (i < (printer_technology == ptFFF ? int(psCount) : int(slapsCount))) { warning_steps.push_back(i); ++i; }
             } else {
                 int i = 0;
-                while (i < int(printer_technology == ptFFF ? posCount : slaposCount)) { warning_steps.push_back(i); ++i; }
+                while (i < (printer_technology == ptFFF ? int(posCount) : int(slaposCount))) { warning_steps.push_back(i); ++i; }
                 for (const PrintObject* po : wxGetApp().plater()->active_fff_print().objects())
                     object_ids.push_back(po->id());
             }

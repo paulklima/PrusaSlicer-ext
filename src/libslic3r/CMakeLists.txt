@@ -12,6 +12,24 @@ include(PrecompiledHeader)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libslic3r_version.h.in ${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h @ONLY)
 
+# Fork build provenance (doc/fork/features/fork-tooling): regenerated on every build from
+# git + doc/fork/features/*/README.md, rewritten only when its content changes.
+find_package(Git QUIET)
+set(FORK_VERSION_OVERRIDE "" CACHE STRING "Fork release tag to report when building without .git")
+set(FORK_GIT_VERSION_H "${CMAKE_CURRENT_BINARY_DIR}/fork_git_version.h")
+add_custom_target(fork_git_version ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=${CMAKE_SOURCE_DIR}
+        -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/fork_git_version.h.in
+        -DOUT=${FORK_GIT_VERSION_H}
+        -DLABEL=${SLIC3R_FORK_LABEL}
+        -DGIT=${GIT_EXECUTABLE}
+        -DSLIC3R_VERSION=${SLIC3R_VERSION}
+        -DOVERRIDE=${FORK_VERSION_OVERRIDE}
+        -P ${CMAKE_SOURCE_DIR}/cmake/modules/ForkGitVersion.cmake
+    BYPRODUCTS ${FORK_GIT_VERSION_H}
+    VERBATIM)
+
 if (MINGW)
     add_compile_options(-Wa,-mbig-obj)
 endif ()
@@ -555,6 +573,8 @@ if (APPLE)
 endif ()
 
 add_library(libslic3r STATIC ${SLIC3R_SOURCES})
+add_dependencies(libslic3r fork_git_version)
+target_sources(libslic3r PRIVATE ForkInfo.cpp ForkInfo.hpp)
 
 if (WIN32)
     target_compile_definitions(libslic3r PUBLIC NOMINMAX)
@@ -678,6 +698,16 @@ if (APPLE)
     # currently, PS targets v10.12
     target_compile_options(libslic3r PUBLIC "-fno-aligned-allocation")
     target_compile_options(libslic3r_cgal PUBLIC "-fno-aligned-allocation")
+endif ()
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Config.hpp's ConfigOption classes carry a Cereal serialize(Archive&) hook
+    # whose name collides with the virtual ConfigOption::serialize(). GCC 13+
+    # (-Woverloaded-virtual, on by default) reports the base virtual as "hidden"
+    # in every TU that includes Config.hpp -> thousands of false positives.
+    # The two functions have unrelated signatures; dispatch and Cereal both work.
+    # PUBLIC so GUI/other consumers of the public Config.hpp header are silenced too.
+    target_compile_options(libslic3r PUBLIC "-Wno-overloaded-virtual")
 endif ()
 
 if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)

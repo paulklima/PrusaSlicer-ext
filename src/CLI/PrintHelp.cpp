@@ -6,6 +6,7 @@
 #include <boost/nowide/iostream.hpp>
 
 #include "CLI.hpp"
+#include "libslic3r/ForkInfo.hpp"
 
 namespace Slic3r::CLI {
 
@@ -123,7 +124,7 @@ static void print_help(const ConfigDef& config_def, bool show_defaults, std::fun
 void print_help(bool include_print_options/* = false*/, PrinterTechnology printer_technology/* = ptAny*/)
 {
     boost::nowide::cout
-        << SLIC3R_BUILD_ID << " " << "based on Slic3r"
+        << SLIC3R_APP_NAME << "-" << fork_info().id << " " << "based on Slic3r"
 #ifdef SLIC3R_GUI
         << " (with GUI support)"
 #else /* SLIC3R_GUI */
