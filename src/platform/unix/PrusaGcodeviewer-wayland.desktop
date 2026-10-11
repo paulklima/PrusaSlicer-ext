@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Prusa GCode viewer
+Exec=env GTK_THEME=Adwaita:dark /opt/prusa/bin/prusa-slicer --gcodeviewer %F
+Icon=/opt/prusa/resources/icons/PrusaSlicer-gcodeviewer_128px.png
+Terminal=false
+Type=Application
+MimeType=text/x.gcode;
+Categories=Graphics;3DGraphics;
+Keywords=3D;Printing;Slicer;
