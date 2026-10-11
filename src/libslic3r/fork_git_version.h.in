@@ -1,0 +1,20 @@
+// Generated at build time by cmake/modules/ForkGitVersion.cmake - do not edit.
+// Only ForkInfo.cpp includes this header.
+#ifndef slic3r_fork_git_version_h_
+#define slic3r_fork_git_version_h_
+
+#define FORK_LABEL            "@FORK_LABEL@"
+#define FORK_ID               "@FORK_ID@"
+#define FORK_VERSION          "@FORK_VERSION@"
+#define FORK_TAG              "@FORK_TAG@"
+#define FORK_LAST_TAG         "@FORK_LAST_TAG@"
+#define FORK_BRANCH           "@FORK_BRANCH@"
+#define FORK_UPSTREAM_TAG     "@FORK_UPSTREAM_TAG@"
+#define FORK_UPSTREAM_COMMIT  "@FORK_UPSTREAM_COMMIT@"
+#define FORK_IS_RELEASE       @FORK_IS_RELEASE@
+#define FORK_IS_RC            @FORK_IS_RC@
+
+// { id, kind, title, upstream_pr, show }
+#define FORK_FEATURES_INIT @FORK_FEATURES_INIT@
+
+#endif // slic3r_fork_git_version_h_

@@ -12,6 +12,10 @@ cmake_minimum_required(VERSION 3.13)
 project(PrusaSlicer)
 
 include("version.inc")
+include("version_fork.inc") # fork identity, see doc/fork/features/fork-tooling
+message(STATUS "SLIC3R_BUILD_ID: ${SLIC3R_BUILD_ID}")
+message(STATUS "SLIC3R_FORK_ID: ${SLIC3R_FORK_ID}")
+
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
