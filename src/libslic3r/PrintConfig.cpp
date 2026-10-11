@@ -5699,7 +5699,7 @@ void update_tilts_by_mode(DynamicPrintConfig& config, int tilt_mode, bool is_sl1
         }
             break;
         case coEnums: {
-            int val1, val2;
+            int val1 = 0, val2 = 0;
             if (opt_key == "tower_speed") {
                 auto values = tower_enums_defs.at(opt_key);
                 val1 = values.get_at(2 * tilt_mode);
