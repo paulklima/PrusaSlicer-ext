@@ -465,7 +465,7 @@ void WebViewPanel::on_add_user_script(wxCommandEvent& WXUNUSED(evt))
     if (dialog.ShowModal() != wxID_OK)
         return;
 
-    const wxString& javascript = dialog.GetValue();
+    const wxString javascript = dialog.GetValue();
     //BOOST_LOG_TRIVIAL(debug) << "RunScript " << javascript << "\n";
     if (!m_browser->AddUserScript(javascript))
         wxLogError("Could not add user script");

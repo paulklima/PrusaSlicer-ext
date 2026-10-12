@@ -1,3 +1,8 @@
+set(_glew_egl OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(_glew_egl ON)
+endif()
+
 add_cmake_project(
   GLEW
   URL https://sourceforge.net/projects/glew/files/glew/2.2.0/glew-2.2.0.zip
@@ -5,4 +10,5 @@ add_cmake_project(
   SOURCE_SUBDIR build/cmake
   CMAKE_ARGS
     -DBUILD_UTILS=OFF
+    -DGLEW_EGL=${_glew_egl}
 )

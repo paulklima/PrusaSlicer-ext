@@ -1342,6 +1342,10 @@ bool GUI_App::on_init_inner()
     // Set initialization of image handlers before any UI actions - See GH issue #7469
     wxInitAllImageHandlers();
 
+    // wx 3.3.2: runtime GLX/EGL selection. Use GLX on X11, EGL on Wayland.
+    // Must be called before any wxGLCanvas creation.
+    OpenGLManager::prefer_glx_if_x11();
+
     // Set our own gui log as an active target
     m_log_gui = new LogGui();
     wxLog::SetActiveTarget(m_log_gui);
@@ -1364,7 +1368,10 @@ bool GUI_App::on_init_inner()
     // https://docs.gtk.org/gtk3/class.Settings.html
     // see also https://docs.wxwidgets.org/3.0/classwx_menu_item.html#a2b5d6bcb820b992b1e4709facbf6d4fb
     // TODO: Find workaround for GTK4
-#if defined(__WXGTK20__) || defined(__WXGTK3__)
+    // The "gtk-menu-images" GtkSettings property was removed in GTK 3.10.
+    // Keeping this call on GTK3 triggers runtime warnings (and may assert on
+    // newer GLib). Restrict it to the GTK2 build only.
+#if defined(__WXGTK2__)
     g_object_set (gtk_settings_get_default (), "gtk-menu-images", TRUE, NULL);
 #endif
 

@@ -13,12 +13,14 @@
 
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Color.hpp"
+#include "libslic3r/ForkInfo.hpp"
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
 
 #include <wx/clipbrd.h> // IWYU pragma: keep
+#include <wx/hyperlink.h>
 
 namespace Slic3r { 
 namespace GUI {
@@ -261,7 +263,27 @@ AboutDialog::AboutDialog()
             version_font.SetPointSize(11);
         #endif
         version->SetFont(version_font);
-        vsizer->Add(version, 0, wxALIGN_LEFT | wxBOTTOM, 10);
+        vsizer->Add(version, 0, wxALIGN_LEFT | wxBOTTOM, std::string(SLIC3R_FORK_ID).empty() ? 10 : 2);
+    }
+
+    // fork identity (only when this build carries one): label, build provenance, upstream base, features
+    if (!std::string(SLIC3R_FORK_ID).empty()) {
+        const ForkInfo& fi = fork_info();
+        std::vector<std::string> lines { SLIC3R_FORK_ID, fi.summary_line(), fi.upstream_line() };
+        if (const std::string features = fi.feature_ids(); !features.empty())
+            lines.emplace_back("Extended features: " + features);
+        wxFont fork_font = GetFont();
+        fork_font.SetPointSize(fork_font.GetPointSize() - 1);
+        for (size_t i = 0; i < lines.size(); ++i) {
+            wxStaticText* fork = new wxStaticText(this, wxID_ANY, wxString::FromUTF8(lines[i]), wxDefaultPosition, wxDefaultSize);
+            fork->SetFont(fork_font);
+            fork->Wrap(45 * em_unit());
+            vsizer->Add(fork, 0, wxALIGN_LEFT | wxBOTTOM, 2);
+        }
+        wxHyperlinkCtrl* url = new wxHyperlinkCtrl(this, wxID_ANY, SLIC3R_FORK_URL, SLIC3R_FORK_URL);
+        url->SetFont(fork_font);
+        url->Bind(wxEVT_HYPERLINK, [](wxHyperlinkEvent& event) { wxGetApp().open_browser_with_warning_dialog(event.GetURL()); });
+        vsizer->Add(url, 0, wxALIGN_LEFT | wxBOTTOM, 10);
     }
     
     // text
@@ -379,7 +401,16 @@ void AboutDialog::onCopyrightBtn(wxEvent &)
 void AboutDialog::onCopyToClipboard(wxEvent&)
 {
     wxTheClipboard->Open();
-    wxTheClipboard->SetData(new wxTextDataObject(_L("Version") + " " + std::string(SLIC3R_VERSION)));
+    wxString info = _L("Version") + " " + std::string(SLIC3R_VERSION);
+    if (!std::string(SLIC3R_FORK_ID).empty()) {
+        const ForkInfo& fi = fork_info();
+        info += "\n" + wxString::FromUTF8(SLIC3R_FORK_ID);
+        info += "\n" + wxString::FromUTF8(fi.summary_line());
+        info += "\n" + wxString::FromUTF8(fi.upstream_line());
+        info += "\n" + wxString::FromUTF8("Extended features: " + fi.feature_ids(true));
+        info += "\n" + wxString::FromUTF8(SLIC3R_FORK_URL);
+    }
+    wxTheClipboard->SetData(new wxTextDataObject(info));
     wxTheClipboard->Close();
 }
 

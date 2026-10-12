@@ -3,6 +3,17 @@
 
 # PrusaSlicer
 
+> **This is a fork of [prusa3d/PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) — "PrusaSlicer ext".**
+> Per upstream release, features are combined and tested on `dev/<version>` and released on
+> `fork/<version>` (e.g. `fork/2.9.6`), tagged `v<upstream>+ext-v<our version>`
+> (e.g. `v2.9.6+ext-v1.0.0`).
+>
+> - **Build it:** `make` (see [`doc/How to build - Linux Wayland.md`](doc/How%20to%20build%20-%20Linux%20Wayland.md))
+> - **Features (one folder each, also listed in Help → About):** [`doc/fork/features/`](doc/fork/features/)
+> - **Release notes:** [`doc/fork/lines/`](doc/fork/lines/) (one file per upstream release line)
+> - **Branches, versions, releases:** [`doc/FORK-WORKFLOW.md`](doc/FORK-WORKFLOW.md)
+> - **Working on the fork (devs & agents):** [`CLAUDE.md`](CLAUDE.md)
+
 You may want to check the [PrusaSlicer project page](https://www.prusa3d.com/prusaslicer/).
 Prebuilt Windows, OSX and Linux binaries are available through the [git releases page](https://github.com/prusa3d/PrusaSlicer/releases) or from the [Prusa3D downloads page](https://www.prusa3d.com/drivers/). There are also [3rd party Linux builds available](https://github.com/prusa3d/PrusaSlicer/wiki/PrusaSlicer-on-Linux---binary-distributions).
 

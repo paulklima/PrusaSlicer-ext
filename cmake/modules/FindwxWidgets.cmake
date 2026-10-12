@@ -941,17 +941,26 @@ if(wxWidgets_FIND_STYLE STREQUAL "unix")
     endif()
 endif()
 
-# Check that all libraries are present, as wx-config does not check it
+# Check that all libraries are present, as wx-config does not check it.
+# wx 3.3+ may emit CMake target names (containing ::) as -l flags;
+# skip those since find_library cannot resolve them.
 set(_wx_lib_missing "")
 foreach(_wx_lib_ ${wxWidgets_LIBRARIES})
   if("${_wx_lib_}" MATCHES "^-l(.*)")
     set(_wx_lib_name "${CMAKE_MATCH_1}")
-    unset(_wx_lib_found CACHE)
-    find_library(_wx_lib_found NAMES ${_wx_lib_name} HINTS ${wxWidgets_LIBRARY_DIRS})
-    if(_wx_lib_found STREQUAL _wx_lib_found-NOTFOUND)
-      list(APPEND _wx_lib_missing ${_wx_lib_name})
+    if("${_wx_lib_name}" MATCHES "::")
+      # CMake target name — cannot be resolved by find_library, skip.
+      # Remove the -l prefix so the linker doesn't choke on it; the
+      # target will be resolved by CMake if it's imported.
+      list(REMOVE_ITEM wxWidgets_LIBRARIES "${_wx_lib_}")
+    else()
+      unset(_wx_lib_found CACHE)
+      find_library(_wx_lib_found NAMES ${_wx_lib_name} HINTS ${wxWidgets_LIBRARY_DIRS})
+      if(_wx_lib_found STREQUAL _wx_lib_found-NOTFOUND)
+        list(APPEND _wx_lib_missing ${_wx_lib_name})
+      endif()
+      unset(_wx_lib_found CACHE)
     endif()
-    unset(_wx_lib_found CACHE)
   endif()
 endforeach()
 

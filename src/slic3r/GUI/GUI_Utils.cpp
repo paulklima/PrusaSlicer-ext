@@ -158,7 +158,9 @@ wxFont get_default_font_for_dpi(const wxWindow *window, int dpi)
 }
 
 bool check_dark_mode() {
-#if wxCHECK_VERSION(3,1,3)
+#if wxCHECK_VERSION(3,3,0)
+    return wxSystemSettings::GetAppearance().IsSystemDark();
+#elif wxCHECK_VERSION(3,1,3)
     return wxSystemSettings::GetAppearance().IsDark();
 #else
     const unsigned luma = wxGetApp().get_colour_approx_luma(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
