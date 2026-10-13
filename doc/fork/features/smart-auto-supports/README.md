@@ -17,9 +17,13 @@ that current printers bridge several cm.
 
 Goal: a second, geometric auto mode that only paints where support is really needed:
 islands / local minima (parts starting in mid-air), bridges longer than a configurable span,
-and cantilevers longer than a configurable reach — detected by comparing the layer slices.
+and cantilevers whose accumulated reach exceeds a limit (dome and ring ceilings exempt) —
+detected by comparing the layer slices.
+Aimed at organic supports: placements prefer positions whose branches reach the build
+plate, and each detector can be used alone or combined without changing the others.
 
-**Status: concept phase.** No code yet. See `notes/concept.md`.
+**Status: concept phase.** No code yet. See `notes/concept.md` and the theory in
+`notes/theory.md`.
 
 ## How to test
 
@@ -28,7 +32,8 @@ TBD (defined in the plan, once the concept is settled).
 ## Upstream status
 
 Not proposed. Upstream has `SupportSpotsGenerator` (FFF, extrusion-based) and island
-detection for SLA only (`src/libslic3r/SLA/SupportIslands/`).
+detection for SLA only (`src/libslic3r/SLA/SupportIslands/`). The 3.0 alphas (up to alpha12)
+add nothing on this topic (`notes/theory.md` §12).
 
 ## Decision log
 
@@ -39,3 +44,6 @@ detection for SLA only (`src/libslic3r/SLA/SupportIslands/`).
 ## Notes
 
 - `notes/concept.md` — general concept, open questions (discussion document).
+- `notes/theory.md` — theory: failure model, shared base model, detector classes (islands,
+  tension regions, cantilevers, stability), plate reachability, composition rules,
+  reference cases.
