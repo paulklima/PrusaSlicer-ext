@@ -3,6 +3,22 @@
 Discussion document. General concept only; the implementation plan comes later in
 `notes/plan.md`. Status: **draft, open for discussion** (2026-10-13).
 
+**Refined by `theory.md`** (2026-10-13): failure model, shared base model, the detector
+classes, plate reachability and composition rules. Where §2–§4 here and `theory.md` differ,
+`theory.md` applies. Superseded in particular:
+
+- §2.2 `BridgeDetector`: the class is unused in 2.9.6; the theory follows the slicer's
+  `detect_bridging_direction` (one direction per region) plus hoop credit for rings.
+- §2.3 cantilever reach: accumulated excess overhang along chains, not per layer.
+- §3 merge window: tolerated islands are ignored and stay ungrounded (theory §3.1).
+- §2.2 "pillars along the span": replaced by a row that crosses the slicer's bridge
+  direction (theory §3.2).
+- §3 "~5 mm cantilever": replaced by `K_max` (3 mm placeholder) on the accumulated reach.
+- §4 painting via `enforce_spot` spheres: replaced by prisms on downward facets with
+  provenance per cause (theory §6–§7).
+- §4 "existing automatic painting stays unchanged": it must clear the new per-cause store or
+  be blocked while it is not empty (theory P6).
+
 ## 1. Problem
 
 Paint-on supports offers three ways to find support areas, none of which matches
@@ -18,7 +34,7 @@ Why "Automatic painting" over-supports (2.9.6 code):
 
 - `bridge_distance = 16.0f` mm is hard-coded (`SupportSpotsGenerator.hpp:56`), not a setting.
 - The allowed unsupported length is `bridge_distance / (1 + |curvature|)^3`, floor 3 mm
-  (`SupportSpotsGenerator.cpp:368-371`, `431-435`).
+  (`SupportSpotsGenerator.cpp:368-371`, `432-435`).
 - Near the top of a dome each layer steps far inwards; the perimeter circles hang almost
   completely in the air and are strongly curved → limit drops to 3 mm → `FloatingExtrusion`
   support points → `enforce_spot` paints a sphere around each (`TriangleSelectorWrapper.cpp:24`).
@@ -99,21 +115,43 @@ sideways overhangs.
 - Vertex local minima ("lower than all neighbours"): used in mesh-based detection; the slice
   island test is the layer equivalent.
 - OrcaSlicer / Bambu Studio "Support critical regions only": supports only "sharp tails"
-  (≈ islands) and cantilevers — closest existing implementation; read their source before
-  implementing (not verified yet).
+  (≈ islands) and cantilevers — closest existing implementation. Verified in the OrcaSlicer
+  source (`src/libslic3r/Support/TreeSupport.cpp`, `detect_overhangs`): cantilever = overhang
+  whose farthest point is > 3 mm from the lower-layer contact, **per layer** (long shallow
+  slopes are never flagged); sharp tail = island with bounding box < 6 mm, tracked upwards up
+  to 16 mm while it does not grow; critical-only mode drops all other overhangs.
 - PrusaSlicer `SupportSpotsGenerator`: extrusion-based, stability model (center of mass, bed
   adhesion, weak necks). Ideas worth keeping: stability checks (`WeakObjectPart`,
   `SeparationFromBed`) are something a pure geometric check does not cover.
 - Arc / wave overhangs (CNC Kitchen, OrcaSlicer-WaveOverhangs): alternative for curved
   overhangs without support.
+- PrusaSlicer 3.0 alphas (checked up to `version_3.0.0-alpha12`): nothing new on support-need
+  detection. Automatic painting is ported to `PaintOnSupportsGizmo` but still erases all
+  paint and drops causes; `SupportSpotsGenerator` and the enforcer/blocker semantics are
+  unchanged; supports default to "Manual Only" (enforcers only). Details in `theory.md` §12.
 
 ## 6. Open questions
 
+Status after `theory.md` in *italics*.
+
 1. Scope: only islands first, or islands + bridges + cantilevers in one go? (Feature rule:
    one usable capability — islands alone might already be usable.)
+   *Answered (theory §8): if H3 holds, islands alone are not usable for organic/figurine
+   prints, because most real demand is cantilevers. Smallest usable capability: base model +
+   islands + cantilevers + bridge/hoop exemption + long-span planning (report only) +
+   reachability, policy and report.*
 2. Keep the stability checks from `SupportSpotsGenerator` (combine) or purely geometric?
+   *Answered (theory §3.4): stability is a separate class of a different nature (mass,
+   not slices); separate detector, reporting first, later. Whether in this feature: still open.*
 3. Curved / ring bridges: how to measure the span?
+   *Answered (theory §2.4, §3.2): tension span `t(p)` along the slicer's single bridge
+   direction; ring bands around a compact hole (domes, funnels, counterbores) as hoop bands
+   with `Feret(H) ≤ B_ceil`; horizontal through-holes are cantilevers until they close.*
 4. Defaults for max bridge length / max cantilever length; per-filament or global?
+   *Still open (theory §9, §11): placeholders only, needs test prints.*
 5. Painting: spots (spheres) or paint the whole unsupported facet region of an island?
+   *Answered (theory §7): islands paint the footprint (+ tail); long spans and cantilevers
+   paint rows/zones; paint confined to the placement, downward facets only.*
 6. Should the thresholds be print settings (also usable without the gizmo, e.g. a new
    "auto (smart)" support mode) or gizmo-only?
+   *Still open (theory §11).*
