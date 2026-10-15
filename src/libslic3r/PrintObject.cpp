@@ -43,6 +43,7 @@
 #include "Layer.hpp"
 #include "PrintBase.hpp"
 #include "PrintConfig.hpp"
+#include "Support/SmartSupportStates.hpp"
 #include "Support/SupportMaterial.hpp"
 #include "Support/TreeSupport.hpp"
 #include "Surface.hpp"
@@ -3433,6 +3434,9 @@ void PrintObject::project_and_append_custom_facets(
         if (mv->is_model_part()) {
             const indexed_triangle_set custom_facets = seam
                     ? mv->seam_facets.get_facets_strict(*mv, type)
+                    : type == TriangleStateType::ENFORCER
+                    // Smart support paint (states 3..9) acts as support enforcers.
+                    ? mv->supported_facets.get_facets_strict(*mv, SmartSupports::enforcer_like_states())
                     : mv->supported_facets.get_facets_strict(*mv, type);
             if (! custom_facets.indices.empty()) {
                 if (seam)
