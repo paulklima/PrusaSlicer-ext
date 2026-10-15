@@ -123,7 +123,8 @@ Volumes recover_volumes(const AnalysisInput &in0, int t, const BoundingBox &regi
 }
 
 // Compares the recovered collision and avoidance with TreeModelVolumes at the given support layers (≤ 5 % sym. diff).
-void check_volumes(const SasPrint &sp, const std::vector<int> &tip_layers)
+// Returns the largest area of avoid_t − coll_t (mm²), to make sure the chain is exercised.
+double check_volumes(const SasPrint &sp, const std::vector<int> &tip_layers)
 {
     const PrintObject   &po = *sp.print_object();
     const AnalysisInput  in = input_of(sp);
@@ -134,6 +135,7 @@ void check_volumes(const SasPrint &sp, const std::vector<int> &tip_layers)
             region.merge(get_extents(ex));
     region.offset(scaled<coord_t>(3.));
     const ExPolygons R { ExPolygon(region.polygon()) };
+    double avoidance_gain = 0.;
     for (int t : tip_layers) {
         const Volumes    ours   = recover_volumes(in, t, region);
         const ExPolygons coll   = intersection_ex(R, offset(union_ex(slicer.collision(t)), scaled<float>(0.005), ClipperLib::jtMiter, 1.2));
@@ -142,7 +144,9 @@ void check_volumes(const SasPrint &sp, const std::vector<int> &tip_layers)
         CHECK(area_mm2(coll) > 1.);
         CHECK(sym_diff_mm2(ours.coll, coll) <= 0.05 * area_mm2(coll) + 0.01);
         CHECK(sym_diff_mm2(ours.avoid, avoid) <= 0.05 * area_mm2(avoid) + 0.01);
+        avoidance_gain = std::max(avoidance_gain, area_mm2(avoid) - area_mm2(coll));
     }
+    return avoidance_gain;
 }
 
 } // namespace
@@ -436,19 +440,21 @@ TEST_CASE("Reachability: collision and Fast avoidance equal TreeModelVolumes", "
 {
     SECTION("T on an 80 x 80 base") {
         const SasPrint &sp = cached_print("t_on_base_80", [] { return t_shape(15., 10., 10., 20., 2., 80., 2.); }, sas_config());
-        check_volumes(sp, { 3, 20, 50, 80, 98 });
+        CHECK(check_volumes(sp, { 3, 20, 50, 80, 98 }) > 1000.);
     }
     SECTION("sphere R 20 on the bed") {
         const SasPrint &sp = cached_print("reach_sphere_r20", [] { return sphere(20.); }, sas_config());
-        check_volumes(sp, { 10, 60, 100, 140, 190 });
+        CHECK(check_volumes(sp, { 10, 60, 100, 140, 190 }) > 100.);
     }
 }
 
 namespace {
 
-// A print of the parts with the facets selected by paint (object frame) painted as support enforcers, fully processed.
-std::unique_ptr<SasPrint> make_painted_print(const Parts &parts, const DynamicPrintConfig &config,
-                                             const std::function<bool(const Vec3d &centroid, const Vec3d &normal)> &paint)
+// A fully processed print of the parts with the facets selected by paint (object frame) painted as support enforcers
+// and an optional support enforcer volume (enforcer_box; empty = none).
+std::unique_ptr<SasPrint> make_enforced_print(const Parts &parts, const DynamicPrintConfig &config,
+                                              const std::function<bool(const Vec3d &centroid, const Vec3d &normal)> &paint,
+                                              const indexed_triangle_set &enforcer_box = {})
 {
     auto out = std::make_unique<SasPrint>();
     DynamicPrintConfig full_config = DynamicPrintConfig::full_print_config();
@@ -456,26 +462,30 @@ std::unique_ptr<SasPrint> make_painted_print(const Parts &parts, const DynamicPr
     ModelObject *object = out->model.add_object();
     for (const indexed_triangle_set &its : parts)
         object->add_volume(TriangleMesh(its));
+    if (! enforcer_box.indices.empty())
+        object->add_volume(TriangleMesh(enforcer_box), ModelVolumeType::SUPPORT_ENFORCER);
     object->add_instance();
     out->model.center_instances_around_point({ 100., 100. });
     object->ensure_on_bed();
-    for (ModelVolume *mv : object->volumes) {
-        const indexed_triangle_set &its   = mv->mesh().its;
-        const Transform3d           trafo = mv->get_matrix();
-        TriangleSelector            selector(mv->mesh());
-        for (size_t i = 0; i < its.indices.size(); ++ i) {
-            const Vec3d a = trafo * its.vertices[its.indices[i](0)].cast<double>();
-            const Vec3d b = trafo * its.vertices[its.indices[i](1)].cast<double>();
-            const Vec3d c = trafo * its.vertices[its.indices[i](2)].cast<double>();
-            if (paint((a + b + c) / 3., (b - a).cross(c - a).normalized()))
-                selector.set_facet(int(i), TriangleStateType::ENFORCER);
-        }
-        mv->supported_facets.set(selector);
-    }
+    if (paint)
+        for (ModelVolume *mv : object->volumes)
+            if (mv->is_model_part()) {
+                const indexed_triangle_set &its   = mv->mesh().its;
+                const Transform3d           trafo = mv->get_matrix();
+                TriangleSelector            selector(mv->mesh());
+                for (size_t i = 0; i < its.indices.size(); ++ i) {
+                    const Vec3d a = trafo * its.vertices[its.indices[i](0)].cast<double>();
+                    const Vec3d b = trafo * its.vertices[its.indices[i](1)].cast<double>();
+                    const Vec3d c = trafo * its.vertices[its.indices[i](2)].cast<double>();
+                    if (paint((a + b + c) / 3., (b - a).cross(c - a).normalized()))
+                        selector.set_facet(int(i), TriangleStateType::ENFORCER);
+                }
+                mv->supported_facets.set(selector);
+            }
     out->print.auto_assign_extruders(object);
     out->print.apply(out->model, full_config);
     if (std::string err = out->print.validate(); ! err.empty())
-        throw std::runtime_error("make_painted_print: " + err);
+        throw std::runtime_error("make_enforced_print: " + err);
     out->print.set_status_silent();
     out->print.process();
     return out;
@@ -489,28 +499,52 @@ const SupportLayer* support_layer_at(const PrintObject &po, double print_z)
     return nullptr;
 }
 
+double distance_mm(const AABBTreeLines::LinesDistancer<Line> &distancer, bool empty, const Point &p)
+{
+    return empty ? std::numeric_limits<double>::max() : unscaled(std::max(0., distancer.distance_from_lines<true>(p)));
+}
+
 struct CrossCheck {
+    int    layers = 0;
     int    covered = 0, covered_ok = 0;   // samples predicted covered / with real support within tip_spacing/2 + r
-    int    gap = 0, gap_near = 0;         // samples predicted uncovered by the roof gap / with real support within G
+    int    gap = 0, gap_near = 0;         // roof-gap samples (InterfaceGap) / with real support within G
+    int    gap_closer = 0;                // roof-gap samples with real support closer than the predicted contact − 0.05 mm
     double min_gap_distance = std::numeric_limits<double>::max();
     double predicted_mm2 = 0, real_mm2 = 0;
+    std::vector<double> covered_distances;
+    double covered_quantile(double q) const {
+        if (covered_distances.empty())
+            return 0.;
+        std::vector<double> d = covered_distances;
+        std::sort(d.begin(), d.end());
+        return d[std::min(d.size() - 1, size_t(q * double(d.size())))];
+    }
+    std::string str() const {
+        std::ostringstream s;
+        s << layers << " layers; covered " << covered_ok << " / " << covered << " with real support near (distance 90 % / max "
+          << covered_quantile(0.9) << " / " << covered_quantile(1.) << " mm); roof gap "
+          << gap << " samples, " << gap_near << " with real support within G, " << gap_closer << " closer than predicted, min distance "
+          << (gap > 0 ? min_gap_distance : 0.) << " mm; contact area real / predicted " << real_mm2 << " / " << predicted_mm2 << " mm²";
+        return s.str();
+    }
 };
 
-// Samples (0.05 mm grid) of the painted overhang E ∩ (L_n − L_{n−1}) of every layer, against the real support of the
-// tip layer (SupportLayer::support_islands).
-CrossCheck cross_check(const SasPrint &sp)
+// Samples (0.05 mm grid) of the enforced overhang E ∩ (L_n − L_{n−1}) of every layer against the real support of the
+// tip layer (SupportLayer::support_islands); E = painted facets ∪ enforcer volumes, as generate_overhangs().
+// A covered sample is ok with real support within spacing_factor · tip_spacing + r.
+CrossCheck cross_check(const SasPrint &sp, double spacing_factor)
 {
     const PrintObject  &po = *sp.print_object();
     const AnalysisInput in = input_of(sp);
     REQUIRE(in.params.raft_support_layers == 0);
     Reachability reach(in);
     prepare(reach, in);
-    std::vector<Polygons> enforcers;
+    std::vector<Polygons> enforcers = po.slice_support_enforcers();
     po.project_and_append_custom_facets(false, TriangleStateType::ENFORCER, enforcers);
-    REQUIRE(enforcers.size() == in.layers.size());
-    const double d_ok  = scaled<double>(0.5 * in.params.tip_spacing + 0.5 * in.params.tip_diameter);
-    const double d_gap = scaled<double>(reach.gap_band_mm());
-    const coord_t step = scaled<coord_t>(0.05);
+    enforcers.resize(in.layers.size());
+    const double  d_ok  = spacing_factor * in.params.tip_spacing + 0.5 * in.params.tip_diameter;
+    const double  d_gap = reach.gap_band_mm();
+    const coord_t step  = scaled<coord_t>(0.05);
     CrossCheck out;
     for (uint32_t n = 1; n < in.layers.size(); ++ n) {
         if (enforcers[n].empty() || ! reach.tips_possible(n))
@@ -519,31 +553,35 @@ CrossCheck cross_check(const SasPrint &sp)
         const ExPolygons Zs = intersection_ex(E, tail_zone(in, n));
         if (Zs.empty())
             continue;
+        ++ out.layers;
         const Reachability::Contact contact = reach.contact(E, n);
-        const ExPolygons cov     = reach.cover(contact.all, n);
-        const ExPolygons cov_tip = reach.cover(contact.tip_path_all, n);
-        const int t = reach.tip_layer(n);
-        const SupportLayer *sl = support_layer_at(po, po.get_layer(t)->print_z);
-        const ExPolygons islands = sl != nullptr ? sl->support_islands : ExPolygons();
-        const AABBTreeLines::LinesDistancer<Line> distancer(to_lines(islands));
+        const ExPolygons    cov      = reach.cover(contact.all, n);
+        const ExPolygons    cov_tip  = reach.cover(contact.tip_path_all, n);
+        const SupportLayer *sl       = support_layer_at(po, po.get_layer(reach.tip_layer(n))->print_z);
+        const ExPolygons    islands  = sl != nullptr ? sl->support_islands : ExPolygons();
+        const AABBTreeLines::LinesDistancer<Line> real(to_lines(islands));
+        const AABBTreeLines::LinesDistancer<Line> predicted(to_lines(contact.all));
         out.predicted_mm2 += area_mm2(contact.all);
         out.real_mm2      += area_mm2(intersection_ex(islands, offset_ex(reach.F_grown(E, n), scaled<float>(0.5 * in.params.tip_diameter))));
+        const auto inside = [](const ExPolygons &ex, const Point &p) {
+            return std::any_of(ex.begin(), ex.end(), [&p](const ExPolygon &e) { return e.contains(p); });
+        };
         const BoundingBox bbox = get_extents(Zs);
         for (coord_t y = bbox.min.y() + step / 2; y < bbox.max.y(); y += step)
             for (coord_t x = bbox.min.x() + step / 2; x < bbox.max.x(); x += step) {
                 const Point p(x, y);
-                if (std::none_of(Zs.begin(), Zs.end(), [&p](const ExPolygon &ex) { return ex.contains(p); }))
+                if (! inside(Zs, p))
                     continue;
-                const auto inside = [&p](const ExPolygons &ex) { return std::any_of(ex.begin(), ex.end(), [&p](const ExPolygon &e) { return e.contains(p); }); };
-                const double d = islands.empty() ? std::numeric_limits<double>::max() :
-                                 std::max(0., distancer.distance_from_lines<true>(p));
-                if (inside(cov)) {
+                const double d = distance_mm(real, islands.empty(), p);
+                if (inside(cov, p)) {
                     ++ out.covered;
                     out.covered_ok += d <= d_ok;
-                } else if (inside(cov_tip)) {
+                    out.covered_distances.push_back(d);
+                } else if (inside(cov_tip, p)) {
                     ++ out.gap;
-                    out.gap_near += d <= d_gap;
-                    out.min_gap_distance = std::min(out.min_gap_distance, unscaled(d));
+                    out.gap_near   += d <= d_gap;
+                    out.gap_closer += d < distance_mm(predicted, contact.all.empty(), p) - 0.05;
+                    out.min_gap_distance = std::min(out.min_gap_distance, d);
                 }
             }
     }
@@ -554,31 +592,57 @@ CrossCheck cross_check(const SasPrint &sp)
 
 TEST_CASE("Reachability: real contact cross-check against process()", "[SmartSupports][sas-reachability][slow]")
 {
-    struct Case { std::string name; std::function<Parts()> parts; std::function<bool(const Vec3d&, const Vec3d&)> paint; };
-    const std::vector<Case> cases {
-        { "40° wall", [] { return slope_wall(40., 10., 5., 20.); },
-          [](const Vec3d &c, const Vec3d &nrm) { return nrm.z() < -0.3 && c.z() > 0.3; } },
-        { "sphere ring", [] { return sphere(10.); },
-          [](const Vec3d &c, const Vec3d &nrm) { const double r = std::hypot(c.x(), c.y()); return nrm.z() < -0.2 && r > 2.5 && r < 6.5; } },
-    };
-    for (const Case &c : cases)
-        for (int interface_layers : { 0, 2 })
-            SECTION(c.name + ", interface layers " + std::to_string(interface_layers)) {
-                auto sp = make_painted_print(c.parts(), sas_config({ { "support_material_interface_layers", interface_layers } }), c.paint);
-                const CrossCheck r = cross_check(*sp);
-                std::ostringstream log;
-                log << c.name << ", interface " << interface_layers << ": covered " << r.covered_ok << " / " << r.covered
-                    << " with real support within tip_spacing/2 + r; roof gap samples " << r.gap << ", within G " << r.gap_near
-                    << ", min distance " << (r.gap > 0 ? r.min_gap_distance : 0.) << " mm; contact area real / predicted "
-                    << r.real_mm2 << " / " << r.predicted_mm2 << " mm²";
-                WARN(log.str());
+    // Distance-based (D34, review 7 M4): tips are discrete, sampled every tip_spacing along lines.
+    SECTION("painted 40° wall and sphere ring: covered within tip_spacing/2 + r") {
+        struct Case { std::string name; std::function<Parts()> parts; std::function<bool(const Vec3d&, const Vec3d&)> paint; };
+        const std::vector<Case> cases {
+            { "40° wall", [] { return slope_wall(40., 10., 5., 20.); },
+              [](const Vec3d &c, const Vec3d &nrm) { return nrm.z() < -0.3 && c.z() > 0.3; } },
+            { "sphere ring", [] { return sphere(10.); },
+              [](const Vec3d &c, const Vec3d &nrm) { const double r = std::hypot(c.x(), c.y()); return nrm.z() < -0.2 && r > 2.5 && r < 6.5; } },
+        };
+        for (const Case &c : cases)
+            for (int interface_layers : { 0, 2 }) {
+                auto sp = make_enforced_print(c.parts(), sas_config({ { "support_material_interface_layers", interface_layers } }), c.paint);
+                const CrossCheck r = cross_check(*sp, 0.5);   // within tip_spacing/2 + r
+                WARN(c.name << ", interface " << interface_layers << ": " << r.str());
+                CHECK(r.layers > 3);
+                if (interface_layers == 0) {
+                    CHECK(r.covered > 1000);
+                    CHECK(r.gap == 0);
+                } else
+                    // The fronts are uncovered by the roof contact of their own layer (InterfaceGap). Only logged here:
+                    // the branches of the tips of the painted layers above pass through the tip layer and support them.
+                    CHECK(r.gap > 1000);
+                if (r.covered > 0)
+                    CHECK(r.covered_ok >= 0.9 * r.covered);
+            }
+    }
+    SECTION("single enforced layer: the roof gap is real") {
+        // One enforced layer (enforcer volume 0.2 mm thick): the real support of its tip layer is its own contact only.
+        struct Case { std::string name; std::function<Parts()> parts; indexed_triangle_set band; };
+        const std::vector<Case> cases {
+            { "40° wall at z 5.1",           [] { return slope_wall(40., 10., 5., 20.); }, box({ -1., -1., 5.02 }, { 30., 21., 5.18 }) },
+            { "sphere R 20 ring at r 5.9",   [] { return sphere(20.); },                  box({ -25., -25., 0.82 }, { 25., 25., 0.98 }) },
+        };
+        for (const Case &c : cases)
+            for (int interface_layers : { 0, 2 }) {
+                auto sp = make_enforced_print(c.parts(), sas_config({ { "support_material_interface_layers", interface_layers } }), nullptr, c.band);
+                // Within tip_spacing + r: on an isolated thin ring the slicer keeps the tips of a chord ≥ connect_length
+                // apart (ensure_maximum_distance_polyline(), TreeSupport.cpp:551-647), gaps reach ≈ 2 · tip_spacing.
+                const CrossCheck r = cross_check(*sp, 1.0);
+                WARN(c.name << ", interface " << interface_layers << ": " << r.str());
+                CHECK(r.layers == 1);
                 if (interface_layers == 0) {
                     CHECK(r.covered > 100);
                     CHECK(r.gap == 0);
-                } else
+                } else {
                     CHECK(r.gap > 100);
-                if (r.covered > 20)
+                    // No hidden contact: the slicer puts no support closer to the roof-gap samples than the predicted roof.
+                    CHECK(r.gap_closer == 0);
+                }
+                if (r.covered > 0)
                     CHECK(r.covered_ok >= 0.9 * r.covered);
-                CHECK(r.gap_near == 0);
             }
+    }
 }
