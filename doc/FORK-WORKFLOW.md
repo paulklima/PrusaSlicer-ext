@@ -19,20 +19,23 @@ For maintainers and AI agents; the short binding rules are in `CLAUDE.md`
 feature/x ─┐
 feature/y ─┼─▶ dev/2.9.6 ──(user: "release")──▶ fork/2.9.6 + tag v2.9.6+ext-v1.0.0
 fix/z ─────┘   development / integration tests    releases only
+                   ▲                                   │
+                   └──── merged back after each release ┘
 ```
 
 | Branch | Purpose |
 |---|---|
 | `feature/<id>`, `fix/<id>` | The work. Based on the upstream tag (`version_2.9.6`); stacked on another feature only if it really extends it (`feature/wx3.3` on `feature/wayland`). Owns `doc/fork/features/<id>/`. |
-| `dev/<upstream>` | Development line: upstream tag + `git merge --no-ff` of the features. All features are tested **together** here; this is the branch you build and run. |
+| `dev/<upstream>` | Development line for **all** releases on this upstream base: upstream tag + `git merge --no-ff` of the features, `feature/fork-tooling` first. All features are tested **together** here; this is the branch you build and run. After each release the release is merged back, so the next release continues from the previous one. |
 | `fork/<upstream>` | Release line: only `git merge --no-ff dev/<upstream>` when the maintainer decides to release, then the release tag. |
 | `pr/<id>` | Upstream-PR head (see appendix): code only, never merged into `dev`/`fork`. |
 
 All merges are merge commits (`--no-ff`, set as default for `dev/*` and `fork/*` by
 `scripts/fork-setup.sh`) with the message `Merge <branch> @<sha10> (base <upstream tag>)`;
-`git fork-bump` replays the merge order from these messages. `dev/*` and `fork/*` are never
+`git fork-bump` replays the merge order from these messages (it ignores the back-merges
+`Merge fork/<upstream> @<sha10> (release <tag>)`). `dev/*` and `fork/*` are never
 rebased or force-pushed after they were pushed. `git log --first-parent dev/2.9.6` lists the
-merged features; `git log --first-parent fork/2.9.6` lists the releases.
+merged features and back-merges; `git log --first-parent fork/2.9.6` lists the releases.
 
 **Granularity:** one feature = one capability with everything it needs (code, docs, tooling,
 its display). Separate features are things that can be kept or dropped independently at an
@@ -53,26 +56,49 @@ make && make run                                            # test
 
 **Test round failed** (any change request = not passed): fix on `feature/<id>`, merge it into
 `dev/2.9.6` again, rebuild. No tags during testing — the build shows itself as
-`Development build on dev/2.9.6`.
+`Development build on dev/2.9.6 (after <last release tag>)`.
 
-**Release** — only when the maintainer says so:
+`dev/2.9.6` is pushed together with a release, not in between: everything merged since the
+last release stays local, so `dev` can still be rebuilt without a feature that is not ready
+(see "Remove a feature").
+
+**Release** — only when the maintainer says so (example: the second release on 2.9.6):
 ```bash
-# on feature/fork-tooling: add '### v2.9.6+ext-v1.0.0 — <date>' to doc/fork/lines/2.9.6.md, merge into dev
-git switch fork/2.9.6 && git merge --no-ff dev/2.9.6
-git tag -a --cleanup=verbatim -F <release-notes section> 'v2.9.6+ext-v1.0.0'
-make && make run                                            # About shows "Release v2.9.6+ext-v1.0.0"
+# on feature/fork-tooling: add '### v2.9.6+ext-v1.1.0 — <date>' to doc/fork/lines/2.9.6.md, merge into dev
+git switch fork/2.9.6
+git merge --no-ff -m "Release v2.9.6+ext-v1.1.0: merge dev/2.9.6 @$(git rev-parse --short=10 dev/2.9.6)" dev/2.9.6
+git tag -a --cleanup=verbatim -F <release-notes section> 'v2.9.6+ext-v1.1.0'
+make && make run                                            # About shows "Release v2.9.6+ext-v1.1.0"
+# back-merge: the release (tag) into the history of dev, the files do not change
+git switch dev/2.9.6
+git merge --no-ff -m "Merge fork/2.9.6 @$(git rev-parse --short=10 fork/2.9.6) (release v2.9.6+ext-v1.1.0)" fork/2.9.6
 # maintainer pushes:
-git push origin dev/2.9.6 fork/2.9.6 'v2.9.6+ext-v1.0.0' feature/<id> ...
+git push origin dev/2.9.6 fork/2.9.6 'v2.9.6+ext-v1.1.0' feature/<id> ...
 ```
 `--cleanup=verbatim` keeps the markdown `#` headings of the notes in the tag message; the same
-text is the body of the GitHub Release.
+text is the body of the GitHub Release. The back-merge must be `--no-ff` (the default for
+`dev/*`): a fast-forward would move `dev` onto the release commit, whose first parent is the
+upstream tag — `git log --first-parent dev/2.9.6` and `git fork-bump` would no longer see the
+feature merges. Without the back-merge the release tag is not in the history of `dev`, and dev
+builds cannot show which release they continue.
+
+**Next release on the same base** — `dev/2.9.6` simply continues; there is no new branch per
+release. After the back-merge it holds exactly the released state; new features/fixes and
+new rounds of released ones are merged on top, `feature/fork-tooling` again at the end with the
+release notes. Our version: MINOR if a feature was added, removed or reworked, PATCH for fixes
+only (see "Versions"). A feature that is merged on `dev` but not ready at release time is left
+out first (see "Remove a feature"); it stays on its branch and is merged again after the release.
 
 **Remove a feature**
-- Not released yet (the merge is only on `dev`, not pushed): rebuild `dev` without it — reset
-  `dev/2.9.6` to the upstream tag and merge the remaining features again.
+- Merged since the last release, `dev` not pushed since: rebuild `dev` without it — reset to
+  the last pushed state and merge the remaining unreleased features again, in the same order:
+  `git switch dev/2.9.6 && git reset --hard origin/dev/2.9.6`, then the merges as above.
+  (`origin/dev/2.9.6` = the back-merge of the last release. Before the first push of a line it
+  does not exist yet: reset to the upstream tag and merge all remaining features.)
 - Already released or pushed: `git revert -m 1 <merge commit of the feature>` on `dev/2.9.6`
   (its doc folder disappears too, so About no longer lists it); the next release ships without
-  it. To bring it back later: revert that revert first, then merge again.
+  it. To bring it back later: revert that revert first, then merge again. Never reset a pushed
+  `dev` — GitHub refuses the force push.
 - At the next upstream release: `git fork-bump … --skip <branch>`.
 
 ## Upstream release (e.g. 2.9.6 → 2.9.7)
@@ -184,7 +210,8 @@ incl. dropped features, and the release notes), `doc/fork/backlog/` (ideas witho
 
 ## Appendix (rarely needed)
 
-- **Release candidate** for testers: `v2.9.6+ext-v1.1.0-rc.1` on `fork/2.9.6`.
+- **Release candidate** for testers: `v2.9.6+ext-v1.1.0-rc.1` on `fork/2.9.6`, made and
+  merged back like a release.
 - **Upstream PR** of a fix/feature: Prusa takes PRs against `master`, so the PR head is a
   separate, short-lived branch with the code commits only (no fork docs):
   `git switch -c pr/<id> upstream/master && git cherry-pick <code commits of fix/<id>>`;

@@ -47,7 +47,8 @@ doc folders), so it is one feature. Merged first into every `dev/<upstream>` lin
   `fork-status.sh` and `fork-bump.sh` into `<git-common-dir>/fork-tools/` (so they work on
   feature branches, which have no `scripts/`), the `git fork-bump` alias, the Claude Code
   session hook and `CLAUDE.local.md`.
-- `scripts/fork-status.sh` — status report (session hook).
+- `scripts/fork-status.sh` — status report (session hook); also reports a release that is not
+  yet merged back into its `dev/<upstream>` line.
 - `scripts/fork-bump.sh` (`git fork-bump plan|rebase|merge <version_X.Y.Z>`) — moves all
   features to a new upstream release (see `doc/FORK-WORKFLOW.md`, "Upstream release").
 
@@ -82,7 +83,8 @@ exists (= time for an upstream bump).
   folders are picked up by a plain `make`, without reconfigure; only `ForkInfo.cpp` recompiles.
 - **No commit hash and no dirty flag** in the header: they change with every commit and would
   recompile + relink the app each time. A release is exact anyway (its tag); development
-  builds show the branch and the last tag.
+  builds show the branch and the last tag (on `dev/<upstream>` reachable because every
+  release is merged back there).
 - Git is only read (`--no-optional-locks`, `-c safe.directory=*` for sandbox/other-uid builds);
   without git everything is `unknown`.
   Packagers can set `-DFORK_VERSION_OVERRIDE=<release tag>`.
