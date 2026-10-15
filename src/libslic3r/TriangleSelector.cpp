@@ -1080,23 +1080,30 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i &nei
         return false;
 
     if (num_of_inside_vertices == 3) {
-        // dump any subdivision and select whole triangle
-        undivide_triangle(facet_idx);
-        tr->set_state(type);
+        if (m_paint_rule) {
+            // Paint rule: keep the subdivision of the fully covered triangle and apply the rule to each of its
+            // leaves, so that leaves the rule keeps (e.g. manual paint) survive.
+            this->apply_paint_rule_recursive(facet_idx, type);
+        } else {
+            // dump any subdivision and select whole triangle
+            undivide_triangle(facet_idx);
+            tr->set_state(type);
+        }
     } else {
         // the triangle is partially inside, let's recursively divide it
         // (if not already) and try selecting its children.
 
-        if (! tr->is_split() && tr->get_state() == type) {
+        if (! tr->is_split() && tr->get_state() == (m_paint_rule ? m_paint_rule(tr->get_state(), type) : type)) {
             // This is leaf triangle that is already of correct type as a whole.
             // No need to split, all children would end up selected anyway.
+            // With a paint rule: the rule keeps the state of this leaf (protected or already painted), never split it.
             return true;
         }
 
         if (triangle_splitting)
             split_triangle(facet_idx, neighbors);
         else if (!m_triangles[facet_idx].is_split())
-            m_triangles[facet_idx].set_state(type);
+            m_triangles[facet_idx].set_state(m_paint_rule ? m_paint_rule(m_triangles[facet_idx].get_state(), type) : type);
         tr = &m_triangles[facet_idx]; // might have been invalidated by split_triangle().
 
         int num_of_children = tr->number_of_split_sides() + 1;
@@ -1113,6 +1120,20 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i &nei
     }
 
     return true;
+}
+
+// Called by select_triangle_recursive() for a triangle fully inside the cursor while a paint rule is set.
+void TriangleSelector::apply_paint_rule_recursive(int facet_idx, TriangleStateType type)
+{
+    assert(m_paint_rule);
+    assert(facet_idx < int(m_triangles.size()) && m_triangles[facet_idx].valid());
+    // No triangles are allocated below, thus the reference stays valid.
+    Triangle &tr = m_triangles[facet_idx];
+    if (tr.is_split()) {
+        for (int i = 0; i <= tr.number_of_split_sides(); ++ i)
+            this->apply_paint_rule_recursive(tr.children[i], type);
+    } else
+        tr.set_state(m_paint_rule(tr.get_state(), type));
 }
 
 void TriangleSelector::set_facet(int facet_idx, TriangleStateType state) {
