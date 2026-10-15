@@ -1603,17 +1603,62 @@ indexed_triangle_set FacetsAnnotation::get_facets_strict(const ModelVolume &mv, 
     return selector.get_facets_strict(states);
 }
 
+// Is there a leaf of any of the states marked in state_mask? A single linear pass over the bitstream without
+// deserialization: the bitstream is a plain sequence of the prefix codes written by TriangleSelector::serialize()
+// (one tree per painted triangle, without gaps), thus the split codes are just skipped,
+// as in TriangleSelector::TriangleSplittingData::update_used_states().
+static bool has_facets_of_states(const TriangleSelector::TriangleSplittingData &data, const std::array<bool, TRIANGLE_STATE_TYPE_COUNT> &state_mask)
+{
+    const std::vector<bool> &bits = data.bitstream;
+    size_t                   ibit = 0;
+    auto next_nibble = [&bits, &ibit]() {
+        int n = 0;
+        for (int i = 0; i < 4; ++ i)
+            n |= int(bits[ibit ++]) << i;
+        return n;
+    };
+    while (ibit + 4 <= bits.size()) {
+        const int code = next_nibble();
+        if ((code & 0b11) != 0)
+            // Split triangle, its children follow.
+            continue;
+        // Leaf: states 0-2 in the first nibble, states 3-16 in the second one, states 17-255 in two more nibbles.
+        int state = code >> 2;
+        if (state == 0b11) {
+            if (ibit + 4 > bits.size())
+                break;
+            if (const int second = next_nibble(); second != 0b1110)
+                state = second + 3;
+            else if (ibit + 8 > bits.size())
+                break;
+            else {
+                const int lo = next_nibble();
+                const int hi = next_nibble();
+                state = (lo | (hi << 4)) + 17;
+            }
+        }
+        if (state < int(TRIANGLE_STATE_TYPE_COUNT) && state_mask[state])
+            return true;
+    }
+    return false;
+}
+
 bool FacetsAnnotation::has_enforcer_like_facets() const {
-    return TriangleSelector::has_facets(m_data, TriangleStateType::ENFORCER) || this->has_auto_states();
+    if (m_data.triangles_to_split.empty())
+        return false;
+    std::array<bool, TRIANGLE_STATE_TYPE_COUNT> state_mask{};
+    for (const TriangleStateType state : SmartSupports::enforcer_like_states())
+        state_mask[size_t(state)] = true;
+    return has_facets_of_states(m_data, state_mask);
 }
 
 bool FacetsAnnotation::has_auto_states() const {
     if (m_data.triangles_to_split.empty())
         return false;
+    std::array<bool, TRIANGLE_STATE_TYPE_COUNT> state_mask{};
     for (uint8_t mask = 1; mask <= SmartSupports::cbAll; ++ mask)
-        if (TriangleSelector::has_facets(m_data, SmartSupports::auto_state(mask)))
-            return true;
-    return false;
+        state_mask[size_t(SmartSupports::auto_state(mask))] = true;
+    return has_facets_of_states(m_data, state_mask);
 }
 
 TriangleSelector::TriangleSplittingData FacetsAnnotation::get_data_auto_baked(const ModelVolume &mv) const {
