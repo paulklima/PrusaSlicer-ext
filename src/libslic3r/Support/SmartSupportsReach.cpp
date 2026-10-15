@@ -68,32 +68,43 @@ double segment_min_mm(const Vec2d &a, const Vec2d &b, double c0, double c1, cons
     return best;
 }
 
-// Seed segments with an AABB tree, shared by a field and its cropped copies.
+// Seed segments with an AABB tree, shared by a field and its cropped copies. The tree is built over double lines in mm:
+// radius and nearest queries of LinesDistancer<Line> (integer boxes) do not prune and scan every line (measured ~20 µs
+// per query on 1800 lines against 0.25 µs for Linef).
 struct SeedSet
 {
-    std::vector<AnchorSeg>              segs;
-    AABBTreeLines::LinesDistancer<Line> distancer;
+    std::vector<AnchorSeg>               segs;
+    AABBTreeLines::LinesDistancer<Linef> distancer;
     std::vector<Vec2d>                  a, b;       // end points in mm
     double                              c_min = 0.; // lowest ĉ of all seeds
+    Vec2d                               bbox_center = Vec2d::Zero();   // mm
+    double                              bbox_radius = 0.;              // half diagonal, mm
 
     explicit SeedSet(std::vector<AnchorSeg> &&seeds) : segs(std::move(seeds)), distancer(lines_of(segs))
     {
         a.reserve(segs.size());
         b.reserve(segs.size());
         c_min = segs.empty() ? 0. : INF_D;
+        BoundingBoxf bbox;
         for (const AnchorSeg &seg : segs) {
             a.emplace_back(unscale(seg.l.a));
             b.emplace_back(unscale(seg.l.b));
+            bbox.merge(a.back());
+            bbox.merge(b.back());
             c_min = std::min(c_min, double(std::min(seg.c0, seg.c1)));
+        }
+        if (bbox.defined) {
+            bbox_center = bbox.center();
+            bbox_radius = 0.5 * bbox.size().norm();
         }
     }
 
-    static Lines lines_of(const std::vector<AnchorSeg> &segs)
+    static Linesf lines_of(const std::vector<AnchorSeg> &segs)
     {
-        Lines lines;
+        Linesf lines;
         lines.reserve(segs.size());
         for (const AnchorSeg &seg : segs)
-            lines.emplace_back(seg.l);
+            lines.emplace_back(unscale(seg.l.a), unscale(seg.l.b));
         return lines;
     }
 
@@ -107,22 +118,30 @@ struct SeedSet
     {
         double      best = INF_D;
         const Vec2d pm   = unscale(p);
-        for (size_t i : distancer.all_lines_in_radius(p, scaled<double>(radius_mm)))
+        for (size_t i : distancer.all_lines_in_radius(pm, radius_mm))
             best = std::min(best, eval(i, pm, delta));
         return best;
     }
 
-    // Euclidean minimum over all seeds. A seed at distance d_s has a value ≥ c_min + d_s − Δ, so after the nearest seed
-    // only the seeds within (best − c_min + Δ) can be better.
+    // Euclidean minimum over all seeds. The search radius grows until a seed is found; a seed at distance d_s has a value
+    // ≥ c_min + d_s − Δ, so then only the seeds within (best − c_min + Δ) can still be better. Radius queries only: the
+    // nearest-line query descends into every node whose box contains the point (most of the tree inside a ring).
     double euclidean_min(const Point &p, double delta) const
     {
         if (segs.empty())
             return INF_D;
-        const Vec2d pm = unscale(p);
-        auto [dist, idx, np] = distancer.distance_from_lines_extra<false>(p);
-        double best = eval(idx, pm, delta);
-        if (const double r = best - c_min + delta; r > 0.)
-            for (size_t i : distancer.all_lines_in_radius(p, scaled<double>(r) + 1.))
+        const Vec2d pm     = unscale(p);
+        const double r_max = (pm - bbox_center).norm() + bbox_radius + 0.001;
+        double       best  = INF_D;
+        double       r     = 0.5;
+        for (;; r = std::min(4. * r, r_max)) {
+            for (size_t i : distancer.all_lines_in_radius(pm, r))
+                best = std::min(best, eval(i, pm, delta));
+            if (best < INF_D || r >= r_max)
+                break;
+        }
+        if (const double r2 = best - c_min + delta; r2 > r)
+            for (size_t i : distancer.all_lines_in_radius(pm, r2 + 1e-6))
                 best = std::min(best, eval(i, pm, delta));
         return best;
     }
@@ -430,29 +449,40 @@ namespace {
 
 struct CarryFront
 {
-    ExPolygon                                                    C;
-    BoundingBox                                                  bbox;
-    bool                                                         grounded = false;
-    std::shared_ptr<const ReachQuery>                            field;
-    ExPolygons                                                   zero;        // grown by 2 µm: q on ∂C counts as inside
-    BoundingBox                                                  zero_bbox;
-    std::shared_ptr<const AABBTreeLines::LinesDistancer<Line>> boundary;
+    ExPolygon                            C;
+    BoundingBox                          bbox;
+    bool                                 grounded = false;
+    std::shared_ptr<const ReachQuery>    field;
+    ExPolygons                           zero;        // grown by 2 µm: q on ∂C counts as inside
+    BoundingBox                          zero_bbox;
+    AABBTreeLines::LinesDistancer<Linef> edges;       // ∂C in scaled double coordinates (see SeedSet)
 
-    // Hanging point q of a within reach r: a itself inside C, else the nearest point of ∂C.
+    // Hanging point q of a within reach r: a itself inside C, else the nearest point of ∂C (radius query only, see
+    // SeedSet::euclidean_min).
     bool hangs(const Point &a, coord_t r, Point &q) const
     {
-        int out = boundary->outside(a);
-        if (out == 0)
-            out = C.contains(a) ? -1 : 1;
-        if (out < 0) {
-            q = a;
-            return true;
+        const Vec2d ad = a.cast<double>();
+        if (bbox.contains(a)) {
+            int out = edges.outside(ad);
+            if (out == 0)
+                out = C.contains(a) ? -1 : 1;
+            if (out < 0) {
+                q = a;
+                return true;
+            }
         }
-        auto [dist, idx, np] = boundary->distance_from_lines_extra<false>(a);
-        if (! (dist <= double(r)))
-            return false;
-        q = Point(coord_t(std::round(np.x())), coord_t(std::round(np.y())));
-        return true;
+        double best  = double(r) * double(r);
+        bool   found = false;
+        for (size_t i : edges.all_lines_in_radius(ad, double(r) + 1.)) {
+            Vec2d        np;
+            const double d2 = line_alg::distance_to_squared(edges.get_line(i), ad, &np);
+            if (d2 <= best) {
+                best  = d2;
+                q     = Point(coord_t(std::round(np.x())), coord_t(std::round(np.y())));
+                found = true;
+            }
+        }
+        return found;
     }
 
     // c*(q): 0 on covered (tension, hoop) or supported material, else c(q).
@@ -572,7 +602,11 @@ void ReachCarry::push(uint32_t layer, double z_top, coord_t w, std::vector<Front
         f.bbox     = fc.bbox.defined ? fc.bbox : get_extents(fc.C);
         f.grounded = fc.grounded;
         f.field    = std::move(fc.field);
-        f.boundary = fc.boundary ? std::move(fc.boundary) : std::make_shared<const AABBTreeLines::LinesDistancer<Line>>(to_lines(fc.C));
+        // FrontCarry::boundary is not used: the carry keeps ∂C as double lines (see SeedSet).
+        Linesf edges;
+        for (const Line &l : to_lines(fc.C))
+            edges.emplace_back(l.a.cast<double>(), l.b.cast<double>());
+        f.edges    = AABBTreeLines::LinesDistancer<Linef>(std::move(edges));
         if (! fc.zero.empty()) {
             f.zero      = offset_ex(fc.zero, float(scaled<double>(0.002)));
             f.zero_bbox = get_extents(f.zero);
