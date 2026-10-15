@@ -1040,7 +1040,10 @@ void TriangleSelectorGUI::update_render_data()
         if (!tr.valid() || tr.is_split() || (tr.get_state() == TriangleStateType::NONE && !tr.is_selected_by_seed_fill()))
             continue;
 
-        int tr_state = int(tr.get_state());
+        // Seed-fill bucket: NONE -> 0, ENFORCER -> 1, any other state -> 2. Indexing by the raw state would read
+        // past the 3-element arrays for states >= 3 (fork fix R1: smart support paint uses states 3..9).
+        const size_t tr_state = tr.get_state() == TriangleStateType::NONE     ? 0 :
+                                tr.get_state() == TriangleStateType::ENFORCER ? 1 : 2;
         GLModel::Geometry &iva = tr.is_selected_by_seed_fill()                 ? iva_seed_fills_data[tr_state] :
                                  tr.get_state() == TriangleStateType::ENFORCER ? iva_enforcers_data :
                                                                                  iva_blockers_data;
