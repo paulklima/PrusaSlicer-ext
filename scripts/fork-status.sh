@@ -42,8 +42,12 @@ if [ "$(g rev-parse --is-shallow-repository)" = "true" ]; then
     say "Shallow clone: merge checks skipped."
 else
     if has "fork/$ver"; then
-        n=$(g rev-list --count --merges --first-parent "fork/$ver..$dev")
+        n=$(g rev-list --count --merges --first-parent --invert-grep --grep='^Merge fork/' "fork/$ver..$dev")
         [ "${n:-0}" -gt 0 ] && say "Not released yet: $n merge(s) on $dev that are not in fork/$ver (release only on the user's decision)."
+        if ! g merge-base --is-ancestor "fork/$ver" "$dev"; then
+            t=$(g describe --tags --exact-match --match 'v*+*-v*' "fork/$ver")
+            say "Last release not merged back: git switch $dev && git merge --no-ff -m \"Merge fork/$ver @$(g rev-parse --short=10 "fork/$ver") (release ${t:-<tag>})\" fork/$ver"
+        fi
     fi
     unmerged=(); nodocs=(); otherbase=()
     for ref in $(g for-each-ref --format='%(refname)' refs/heads/feature refs/heads/fix); do
@@ -77,5 +81,5 @@ done
 
 say "AGENT: work only on feature/<id> or fix/<id> (ask the user which, and the <id>, before creating one)."
 say "  Merge into dev/* with --no-ff for testing; a change request from the user = test failed, keep fixing."
-say "  Merge dev/* into fork/* and tag ONLY when the user says 'release'. Never push (the user pushes)."
+say "  Merge dev/* into fork/*, tag, merge fork/* back into dev/* ONLY when the user says 'release'. Never push (the user pushes)."
 exit 0
