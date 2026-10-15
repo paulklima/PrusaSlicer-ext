@@ -234,28 +234,30 @@ TEST_CASE("Raster: make_grid, rasterize, cells_to_expolygons", "[SmartSupports][
     }
 }
 
-TEST_CASE("ReachField: straight anchor on a rectangle rotated by 13.28°", "[SmartSupports][sas-reach]")
+TEST_CASE("ReachField: straight anchor on a rotated rectangle", "[SmartSupports][sas-reach]")
 {
-    // 13.28° is the worst direction of the 16-neighbour metric (2.73 %); 8 neighbours would be 6.9 % off (review 4 M7).
-    const double     angle  = 13.28;
-    const Params     params = test_params();
-    const ExPolygon  rect   = rotated(rectangle_mm(0., 0., 20., 6.), angle);
-    const ReachField field({ rect }, { rect }, seeds_along({ rot({ 0., 0. }, angle), rot({ 20., 0. }, angle) }, 0.f), 0., params, {});
-    REQUIRE(! field.direct_mode());
-    CHECK(field.res() == scaled<coord_t>(params.grid_res_min));
-    double worst = 0.;
-    for (double x = 3.; x <= 17.; x += 0.37) {
-        for (double d : { 0.02, 0.2, 0.45 })
-            CHECK(field.value(pt(rot({ x, d }, angle))) == Catch::Approx(d).margin(0.01));
-        for (double d : { 1., 2., 3., 4., 5., 5.9 }) {
-            const double v = field.value(pt(rot({ x, d }, angle)));
-            CHECK(v >= d - 1e-3);
-            CHECK(v <= 1.035 * d);
-            worst = std::max(worst, v / d - 1.);
+    // From a straight anchor the error is 1/cos of the angle between the normal and the nearest step direction:
+    // 13.28° is the worst case of 16 neighbours (2.73 %, review 5 m7), 22.5° the worst case of 8 neighbours (8.2 %;
+    // 16 neighbours 0.25 %).
+    const Params params = test_params();
+    for (double angle : { 13.28, 22.5 }) {
+        const ExPolygon  rect = rotated(rectangle_mm(0., 0., 20., 6.), angle);
+        const ReachField field({ rect }, { rect }, seeds_along({ rot({ 0., 0. }, angle), rot({ 20., 0. }, angle) }, 0.f), 0., params, {});
+        REQUIRE(! field.direct_mode());
+        CHECK(field.res() == scaled<coord_t>(params.grid_res_min));
+        double worst = 0.;
+        for (double x = 3.; x <= 17.; x += 0.37) {
+            for (double d : { 0.02, 0.2, 0.45 })
+                CHECK(field.value(pt(rot({ x, d }, angle))) == Catch::Approx(d).margin(0.01));
+            for (double d : { 1., 2., 3., 4., 5., 5.9 }) {
+                const double v = field.value(pt(rot({ x, d }, angle)));
+                CHECK(v >= d - 1e-3);
+                worst = std::max(worst, v / d - 1.);
+            }
         }
+        INFO("angle " << angle << ", worst relative error " << worst);
+        CHECK(worst <= 0.035);
     }
-    INFO("worst relative error " << worst);
-    CHECK(worst < 0.035);
 }
 
 TEST_CASE("ReachField: geodesic L path rotated by 22.5°", "[SmartSupports][sas-reach]")
