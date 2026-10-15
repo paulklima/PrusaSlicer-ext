@@ -1,7 +1,7 @@
 # Concept — smart automatic support painting
 
-Discussion document. General concept only; the implementation plan comes later in
-`notes/plan.md`. Status: **draft, open for discussion** (2026-10-13).
+Discussion document. General concept only; the implementation plan is `notes/plan.md`
+(v1, 2026-10-15). Status: **draft, open for discussion** (2026-10-13).
 
 **Refined by `theory.md`** (2026-10-13): failure model, shared base model, the detector
 classes, plate reachability and composition rules. Where §2–§4 here and `theory.md` differ,
