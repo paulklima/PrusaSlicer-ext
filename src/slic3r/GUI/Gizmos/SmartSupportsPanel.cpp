@@ -306,7 +306,7 @@ SS::Result fake_run(const SS::AnalysisInput &in, const SS::IsCanceled &is_cancel
                     continue;
                 sel.set_facet(f, auto_state(bit));
                 painted[bit == cbIsland ? 0 : 1] = true;
-                if (markers.size() < 64 && (f % 7) == 0)
+                if (markers.size() < 64)
                     markers.emplace_back(vol.trafo * ((a + b + c) / 3.));
             }
             vp.data = sel.serialize();
@@ -558,7 +558,7 @@ void SmartSupportsPanel::poll(bool force)
     if (mo == nullptr)
         return;
     m_poll.mo_id = mo->id();
-    update_effective_config(force);
+    update_effective_config(false);   // rebuilt on object config / policy changes and every PollPeriod
     m_poll.has_smart_paint = has_smart_paint(*mo);
 
     if (const LastRun *lr = current_last_run()) {
@@ -604,11 +604,14 @@ void SmartSupportsPanel::defer(std::function<void(SmartSupportsPanel &)> fn)
 void SmartSupportsPanel::on_data_changed()
 {
     const ModelObject *mo = m_host.model_object();
-    if (busy() && (mo == nullptr || mo->id() != m_run_mo_id))
+    const ObjectID     id = mo != nullptr ? mo->id() : ObjectID();
+    if (busy() && (mo == nullptr || id != m_run_mo_id))
         cancel_run();
-    if (mo == nullptr || ! m_poll.valid || m_poll.mo_id != mo->id()) {
+    if (id != m_shown_mo_id) {
         // Another object: its own last run (if any) is shown.
+        m_shown_mo_id = id;
         m_selected_entry.reset();
+        m_marker_key.reset();
         if (! busy()) {
             m_state = State::Idle;
             m_message.clear();
@@ -707,7 +710,14 @@ void SmartSupportsPanel::start_run()
             p.cancel_run();
             return;
         }
-        wxGetApp().plater()->reslice_FFF_until_step(posSlice, *mo, false);
+        Plater *plater = wxGetApp().plater();
+        plater->reslice_FFF_until_step(posSlice, *mo, false);
+        // The reslice applied the current model and config: an invalid print would never be sliced.
+        if (const std::string err = plater->active_fff_print().validate(); ! err.empty()) {
+            p.cancel_run();
+            p.set_failed(_u8L("Painting where needed requires a valid print setup.") + " " + err);
+            return;
+        }
         p.m_reslice_requested = true;
         p.m_last_reslice      = Clock::now();
         p.m_host.request_redraw(PollFrameMs);
@@ -782,6 +792,7 @@ void SmartSupportsPanel::start_job(const PrintObject &po, ModelObject &mo, size_
     auto result = std::make_shared<SS::Result>();
     m_job       = std::make_shared<JobShared>();
     const bool        fake   = fake_mode();
+    m_run_fake               = fake;
     const std::string status = _u8L("Painting supports where needed");   // translated on the UI thread
     const uint64_t    run_id = m_run_id;
     std::weak_ptr<int> alive = m_alive;
@@ -911,7 +922,7 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
     for (const SS::ContractIssue &ci : input->contract)
         if (ci.key == SS::ContractIssue::Raft || ci.key == SS::ContractIssue::ReachBelowTipSpacing)
             lr.advisory.emplace_back(ci);
-    lr.fake = fake_mode();
+    lr.fake = m_run_fake;
     update_effective_config(true);
     lr.config_fp = SS::config_fingerprint(m_eff.full, *mo, lr.analysed_instance, lr.user);
     m_last_runs[mo->id().id] = std::move(lr);
@@ -1432,7 +1443,8 @@ void SmartSupportsPanel::render_section(float window_width)
 void SmartSupportsPanel::render_report_window(float x, float y, float bottom_limit)
 {
     const LastRun *lr = current_last_run();
-    if (! m_report_open || lr == nullptr || ! m_host.is_open())
+    if (! m_report_open || lr == nullptr || ! m_host.is_open() ||
+        (lr->report.empty() && lr->advisory.empty() && lr->report_more[0] + lr->report_more[1] == 0))
         return;
 
     ImGuiWrapper     &imgui = *wxGetApp().imgui();

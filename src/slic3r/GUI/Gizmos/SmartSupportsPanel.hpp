@@ -196,6 +196,7 @@ private:
     bool                                        m_scroll_to_section = false;
     bool                                        m_report_open       = false;
     std::optional<size_t>                       m_selected_entry;
+    ObjectID                                    m_shown_mo_id;       // object of the last on_data_changed()
     float                                       m_last_window_height = 0.f;
     std::set<size_t>                            m_gate_answered;     // objects answered with "Paint anyway"
 
@@ -208,6 +209,7 @@ private:
     std::chrono::steady_clock::time_point       m_last_reslice;
     std::shared_ptr<std::atomic<bool>>          m_cancel_flag;
     std::shared_ptr<JobShared>                  m_job;
+    bool                                        m_run_fake = false;  // the running job uses the fake result
     std::string                                 m_message;           // Failed: error; Idle: notice
 
     // caches
