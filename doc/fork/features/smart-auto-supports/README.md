@@ -22,12 +22,61 @@ detected by comparing the layer slices.
 Aimed at organic supports: placements prefer positions whose branches reach the build
 plate, and each detector can be used alone or combined without changing the others.
 
-**Status: concept phase.** No code yet. See `notes/concept.md` and the theory in
-`notes/theory.md`.
+**Status: implementation (v1 in progress).** Plan: `notes/plan.md` (revision 4, reviewed in
+three rounds); specification: `notes/theory.md`. Work packages per plan §8; their progress
+and deviations are in `notes/wp-log*.md`.
+
+v1 scope (plan §0): a "Paint where needed" section at the end of the paint-on supports gizmo.
+It paints support enforcers for islands and overhangs (cantilevers) only where the slicer's
+own tree contact would support them; bridges and hoop bands (domes, funnels, counterbores) are
+exempt, long bridges are planned and reported but not painted. Smart paint is stored as
+TriangleSelector states 3–9 (the slicer treats them as enforcers), never overwrites manual
+paint, and is baked to plain enforcers in 3MF for stock PrusaSlicer.
+
+## Files touched
+
+New module `src/libslic3r/Support/SmartSupports*` (analysis, pure libslic3r), GUI
+`src/slic3r/GUI/Gizmos/{SmartSupportsPanel,TriangleSelectorFdmGui}.*`; changes in
+`TriangleSelector`, `Model` (`FacetsAnnotation`), `PrintObject.cpp` (projection), `Print.cpp`
+(warning), `Format/3mf.cpp`, `GLGizmoFdmSupports`, `GLGizmoPainterBase.cpp`; tests in
+`tests/libslic3r` and `tests/fff_print`. Full list: plan §2.1.
 
 ## How to test
 
-TBD (defined in the plan, once the concept is settled).
+**Unit tests** (from the build directory; tag `[SmartSupports]`, one module tag each, e.g.
+`[sas-reach]`; `[slow]` cases run a full slice, `[.benchmark]` is hidden):
+
+```
+tests/fff_print/fff_print_tests "[SmartSupports]"
+tests/libslic3r/libslic3r_tests "[SmartSupports]"
+```
+
+**On the host** (after the sandbox build passes; full checklist in plan §7.3):
+- Panel: fields and collapse state persist; the gizmo window stays on the canvas at
+  1366×768 / 1920×1080, 100 % / 150 %, and scrolls; the report window sits right of it.
+- T-shape: Paint → "Slicing…" → "Analysing… %" → cyan paint beyond ~3 mm; one undo removes
+  it. Hollow dome: nothing painted (Automatic painting paints its top).
+- Manual paint: enforcers and blockers stay, nothing is painted inside a blocker ("Kept free
+  by your blocker"); unchecking a cause and running again removes its paint; "Remove smart
+  paint" keeps manual paint.
+- Plate policy: T on a wide base — Prefer build plate paints with "Support on the model",
+  Build plate only paints nothing and lists problems.
+- Contract: pre-run warnings for support off / auto on / grid style, none for interface
+  layers; with interface layers 3 a 40° wall shows the after-run "Fix…" line with its side
+  effects; "Apply and paint" uses the new config; undo reverts.
+- Preview: organic tips on the plate under smart paint; on-model tips only where reported.
+- 3MF: reopened in the fork keeps the colours ("run again for the report"); stock PrusaSlicer
+  2.9.x shows blue enforcers, same support, no crash.
+- Robustness: smart fill / Triangles brush over smart paint; cancel while slicing and
+  analysing; closing the gizmo, switching or deleting objects, loading a project or quitting
+  during analysis; brush and buttons disabled while busy; background processing on and off.
+- Variants: object on bed 2, instances with different rotations, non-printable instance,
+  multi-part objects with modifiers / negative volumes / enforcer and blocker volumes,
+  scaled / mirrored / rotated objects, raft, variable layer height, first layer ≠ layer
+  height; copy/paste, split, Cut, Simplify; "Automatic painting" after a smart run.
+- Report row → marker at the right place; "Clip at this height".
+- A ~1M-triangle figurine: run time, paint and 3MF size, undo memory, brush FPS.
+- Language switch, colour-blindness palette check, dev build (wx 3.3, Wayland).
 
 ## Upstream status
 
@@ -40,10 +89,18 @@ add nothing on this topic (`notes/theory.md` §12).
 | Upstream base | Decision | Reason |
 |---|---|---|
 | version_2.9.6 | concept | started 2026-10-13 |
+| version_2.9.6 | implement v1 | theory reviewed and amended, plan reviewed in three rounds; started 2026-10-15 |
 
 ## Notes
 
 - `notes/concept.md` — general concept, open questions (discussion document).
 - `notes/theory.md` — theory: failure model, shared base model, detector classes (islands,
-  tension regions, cantilevers, stability), plate reachability, composition rules,
-  reference cases.
+  tension regions, cantilevers, stability), plate reachability and the slicer's contact,
+  composition rules, reference cases; amended for v1 (2026-10-15).
+- `notes/plan.md` — implementation plan v1: decisions, architecture and interfaces, test
+  plan, host checklist, work packages, review resolution, open questions.
+- `notes/research-algo.md`, `notes/research-gui.md` — code research on 2.9.6 (libslic3r
+  algorithm base; gizmo, paint storage, 3MF).
+- `notes/wp-log*.md` — per work package: exact deviations from the plan, decisions on
+  ambiguities, notes for later work packages.
+- `reviews/` — the plan reviews (`plan-review-{1..7}-*.md`, three rounds).
