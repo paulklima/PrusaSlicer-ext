@@ -7,9 +7,9 @@ Theory document for `feature/smart-auto-supports`. It refines §2–§4 of `conc
 - plate reachability for organic supports;
 - the rules that let each detector be used alone or together.
 
-Implementation decisions beyond what the theory needs go into `notes/plan.md`. Notes marked
-**v1:** name the choice of the first implementation (plan decisions D1–D35); the rules around
-them stay implementation-neutral.
+Implementation decisions beyond what the theory needs go into `notes/plan.md`. Notes that
+start with "v1" name the choice of the first implementation (plan decisions D1–D35); the rules
+around them stay implementation-neutral.
 
 Status: **reviewed, amended for the v1 plan** (2026-10-15). Draft of 2026-10-13: three part
 reviews and four full review rounds. Amendments of 2026-10-15, from the plan reviews
@@ -171,8 +171,8 @@ slicer's own business.
 
 **Grounded material** is decided per point, layer by layer:
 - layer 0 is grounded (bed);
-- a point of `S_n` is grounded if it lies in `offset(grounded part of L_{n−1}, w_n)` or in
-  the supported area `F⁺_n` (below);
+- a point of `S_n` is grounded if it lies in `offset(grounded part of L_{n−1}, w_n)` (round,
+  as in §2.1) or in the supported area `F⁺_n` (below);
 - a point of a front is grounded if its front has a grounded anchor, whether the point is
   covered or not, because it is attached;
 - nothing else makes material grounded. In particular, connectivity inside a layer does not.
@@ -278,8 +278,8 @@ What the slicer bridges (research correction):
   with a zero angle, i.e. the whole overhang, not the front `C` (`PrintObject.cpp:1074`,
   `1104-1110`). Bridge infill fills its part inside the perimeters (the fill surface).
 - **Anchors of the direction.** Only the wave expansions of that surface into the region's
-  fill surfaces (internal solid, sparse infill, top), up to about `shell_width·√2`
-  (`LayerRegion.cpp:470-505`). Bridge edges that touch **perimeters** count as floating
+  fill surfaces: into internal solid and top surfaces up to about `shell_width·√2`, into
+  sparse infill by one perimeter spacing (`LayerRegion.cpp:470-505`). Bridge edges that touch **perimeters** count as floating
   (`LayerRegion.cpp:319`), so walls too thin for infill do not anchor the direction.
 - A configured `bridge_angle` > 0 replaces the detection (`LayerRegion.cpp:513-516`).
 
@@ -315,8 +315,8 @@ The span itself:
 only along a free piece `Π` of its edge (**chord rule**) that is:
 - **anchored at both ends**: each end of `Π` meets an anchor, not ungrounded or unprintable
   material;
-- **closed at both ends**: at each end the anchor crosses the strip, meeting the chord of `Π`
-  at ≥ 45°. Side walls do this. An anchor that runs along the strip's long side does not:
+- **closed at both ends**: at each end the anchor boundary runs across the strip; its
+  direction there makes an angle of at least 45° with the chord of `Π`. Side walls do this. An anchor that runs along the strip's long side does not:
   a strip that hangs from its long side (e.g. along a horizontal hole) has a U-shaped free
   outline that stays within one width of its chord, but it hangs by bending;
 - **straight**: `Π` deviates from its chord by no more than one extrusion width.
@@ -375,8 +375,10 @@ limit:
 
 **Filter.** `ε` is a **minimal width**. The union of all needs of a layer gets a morphological
 opening with radius `ε/2`, which removes slivers narrower than `ε`; then components smaller
-than `A_min` are dropped. A small `ε` keeps the dead band below α narrow: only walls within
-about 1° of α never produce needs.
+than `A_min` are dropped. A small `ε` keeps the dead band below α narrow: a wall never
+produces needs only if its front is narrower than `ε`, i.e. within about 1.4° of α at
+h = 0.2 (≈ 2.7° at h = 0.1, α = 45°). The band depends on the layer height, but unlike a
+filter on `U_n` it does not break chains.
 
 **Not every point is covered or a need.** Tolerated islands and filtered slivers are
 *exempt*. Tail points are needs regardless of tension, hoop or reach; only support (`F⁺_n`)
@@ -577,8 +579,12 @@ branch can reach the plate. It is the complement of the slicer's own query:
 - Layers are counted in support-layer space: object layer + all support layers below the
   object (`TreeSupportSettings::raft_layers`, `TreeSupportCommon.cpp:147-176`).
 - **No tips below the first support layer.** Tips exist only on support layers
-  `≥ max(raft layers − (z_top + 1), 1)` (`TreeSupport.cpp:1300-1305`). Without a raft, the
-  lowest `z_top + 1` object layers get no support at all; their needs are reported (§4).
+  `≥ max(raft layers − (z_top + 1), 1)` (`TreeSupport.cpp:1300-1305`). Without a raft,
+  object layers 1 … `z_top + 1` get no support at all; their needs are reported (§4).
+- Symbols: `tip_d` = `support_tree_tip_diameter`, `r = tip_d/2`; `xy_min` =
+  `min(xy, ½·ext_width)` (`TreeSupportCommon.cpp:58-60`, `108`); `z_top`, `z_bottom` = top
+  and bottom contact distance in layers (`TreeSupportCommon.cpp:112-113`); `extra_outset`
+  ≈ `r − line width/2` (§5.2).
 
 **How the avoidance is built.**
 - It is built bottom-up: `avoidance(n) = collision(n) ∪ shrink(avoidance(n−1), max_move)`
@@ -593,10 +599,11 @@ branch can reach the plate. It is the complement of the slicer's own query:
   (`TreeModelVolumes.cpp:109-110`, `302-304`).
 - **Research correction:** the collision does **not** include the machine border:
   `calculateMachineBorderCollision()` returns nothing (`TreeModelVolumes.cpp:49-63`).
-- **Research correction:** painted blockers are not in the collision either. They would be
-  added only while processing the "last mesh", a condition that is never true
-  (`TreeModelVolumes.cpp:480`, `528-530`). Blockers keep neither tips nor branches away;
-  only the clearance of §5.2 does.
+- **Research correction:** blockers are not in the collision either. `TreeModelVolumes`
+  reads only blocker volumes (`TreeModelVolumes.cpp:106`) and would add them only while
+  processing the "last mesh", a condition that is never true (`TreeModelVolumes.cpp:480`,
+  `528-530`); painted blockers are not read there at all. Blockers keep neither tips nor
+  branches away; only the clearance of §5.2 does.
 
 **Contact.** For the union `E_n` of all painted zones of layer `n` (§2.2). `forbid_t` is the
 avoidance if the slicer's `support_material_buildplate_only` is on, else the collision
@@ -612,6 +619,8 @@ avoidance if the slicer's `support_material_buildplate_only` is on, else the col
     keeps ≥ `minimum_roof_area` = 1 mm² (`TreeSupport.cpp:1122-1170`,
     `TreeSupportCommon.hpp:131`): the contact is the roof `K` itself;
   - **tip path** otherwise: the contact is `A_n` within `r` of the tips.
+  - Tips from the `extra_outset` extension always take the tip path
+    (`TreeSupport.cpp:1421`, `1433-1437`).
 - **Plate or model.** A tip in `R_n` is a plate tip. A tip outside `R_n` is a model tip,
   built only if support may rest on the model (`TreeSupport.cpp:390-405`).
 - `F_n` = union of the contacts; its plate part is what plate tips carry.
@@ -638,8 +647,12 @@ Material within `G` of `L_{n−1}` and within `G` of the contact counts as suppo
   beyond the contact.
 
 **Roofs** (interface layers > 0). A roof excludes the whole collision, without tip discs
-reaching back. With `z_top = 1` it starts `r + xy_min/2` from `L_{n−1}` (≈ 0.52 mm at
-defaults, `TreeSupport.cpp:1327`, `1418`), beyond the gap band.
+reaching back. With `z_top = 1` it starts at least `r + xy_min/2` from `L_{n−1}` (≈ 0.52 mm
+at defaults, `TreeSupport.cpp:1327`, `1418`); steep lower layers push it farther out.
+- The gap band reaches a roof only if `r + xy_min/2 < 2·G`, i.e. `r < 1.5·xy_min`. At
+  defaults it does not (0.4 > 0.34); with a large `xy_min` (e.g. a 0.6 mm nozzle and the
+  default tip) it covers part of the roof gap. v1 applies the band to all contact (plan
+  §3.7); whether it should apply to roofs is open (§11).
 - Flat overhangs (shelves, T-arms, first layers of islands) are covered by roofs and get the
   dense interface.
 - Steep slope fronts and tail rings cannot be supported at all: they lie within the roof gap
@@ -653,16 +666,19 @@ defaults, `TreeSupport.cpp:1327`, `1418`), beyond the gap band.
   mirror this, so very narrow roof components may be reported falsely (conservative).
 
 **Discrete tips.** The slicer samples tips along lines `support_tree_branch_distance` apart,
-resampled about every `connect_length` (≈ 3 mm with the stock top rate of 15 %;
-`TreeSupport.cpp:1181-1201`, `1258`). Thin overhangs get their outline sampled. The contact
-is modelled as an area. That is valid when the supported material spans the gaps between
-tips, i.e. `K_max ≥ tip_spacing/2`; otherwise the tool shows an advisory note (plan D34).
+resampled every `tip_spacing` = `connect_length` (≈ 3.1 mm at stock defaults, top rate
+15 %; `TreeSupport.cpp:1181-1201`, `1258`). Thin overhangs get their outline sampled. With
+interface layers > 0, roof candidates that do not become roofs get tips every `r/2` along
+their lines (`TreeSupport.cpp:1180-1184`). The contact is modelled as an area. That is valid
+when the supported material spans the gaps between tips, i.e. `K_max ≥ tip_spacing/2`;
+otherwise the tool shows an advisory note (plan D34).
 
 **Margin.** Propagation re-checks branches at their growing radius
 (`TreeSupport.cpp:1612-1613`), so tips close to the edge of `R_n` can still be lost or end
-on the model. A margin of about one branch radius is only a tolerance for this. Tips outside
-`R_n` or within the margin raise a flag ("some tips stand on the model", §5.3); they never
-reject a placement.
+on the model. A margin of about one branch radius is only a tolerance for this: tips outside
+`R_n`, or within the margin, raise a flag ("some tips stand on the model", §5.3); they never
+reject a placement. Tips outside `R_n` exist only when support may rest on the model. v1
+flags only tips outside `R_n` (area ≥ `A_min`); a margin flag is not implemented (plan §3.7).
 
 **Not modelled** (reported as risks):
 - crowding between branches;
@@ -696,12 +712,14 @@ layer's painted zones so far (manual and accepted):
 
 `F(E)` is the contact of §5.1 for the painted zones `E`. A plate placement paints the plate
 part. A clearance from the edge of `R_n` applied to `Z` would be wrong: the collision alone
-keeps tips `r + xy_min/2` beyond `L_{n−1}`, so it would forbid plate placements on all but
-the flattest slopes.
+keeps tips at least `r + xy_min/2` (z_top = 1) beyond `L_{n−1}`, so it would forbid plate
+placements on all but the flattest slopes.
 
 **Acceptance.** A placement counts only if the need area of its cause, re-evaluated on the
-union `E ∪ P`, falls by at least `A_min`. Otherwise it is discarded without a trace and the
-next option is tried (v1: plate part → widened zone → model, §5.3).
+union `E ∪ P`, falls by at least `A_min`, and the needs of no other cause grow. Otherwise it
+is discarded without a trace and the next option is tried (v1: plate part → widened zone →
+model, §5.3). Other causes' needs can grow only through a roof merge (§5.1, P4). v1 checks
+only the placing cause (plan §3.9).
 
 **Blocker clearance.** Paint keeps `tip_d + extra_outset` away from blocker projections.
 - `extra_outset` is how far the slicer pulls tips outward, ≈ tip radius − line width/2
@@ -754,6 +772,8 @@ accounts for it.
     roof only on the roof path (`supports_roof`, `TreeSupport.cpp:1179`), so tip-path contacts
     are affected even with interface layers > 0; only roof components are exempt. On-model
     placements are checked against this height and against the placeable areas.
+  - v1 checks the height only (plan D23) and does not keep plate and on-model placements
+    apart; possible merging is only reported (plan §3.9).
 
 **Tip status order:** `TO_BP_SAFE → TO_BP → TO_MODEL_GRACIOUS_SAFE → TO_MODEL_GRACIOUS →
 TO_MODEL → dropped`. The three `TO_MODEL_*` states apply only when support may rest on the model
@@ -832,8 +852,11 @@ level.
   - **Limit: roofs.** Adding paint adds contact only with interface layers 0. With roofs,
     merging zones can turn tips into a roof and move contact away (§5.1). Each trial is
     therefore evaluated on the union of the layer's painted zones, so every accepted step
-    really reduces the needs. Needs that reappear when a later zone merges with an earlier
-    one are caught by verification (§7).
+    really reduces the needs of its cause. A later zone can still bring back needs of a
+    cause placed earlier on the same layer; the acceptance rule of §5.2 forbids this.
+    v1 checks only the placing cause (plan §3.9), and its verification compares the actual
+    paint with the plan, which already contains the merge (§7). Such needs then stay
+    unreported; this can happen only with interface layers > 0.
 - **P5 — user paint wins.**
   - Never paint over user blockers, and keep paint `tip_d + extra_outset` away from them
     (§5.2). The slicer itself lets enforcers override blockers in classic and tree/organic
@@ -845,24 +868,26 @@ level.
   - Manual paint is never erased. Today's Automatic painting erases all paint, enforcers and
     blockers alike (`GLGizmoFdmSupports.cpp:546-564`; still true in 3.0, §12).
 - **P6 — provenance.** Auto paint is stored with its causes, in the volume's support paint
-  itself.
-  - **Storage.** v1 uses `TriangleSelector` states of their own: state `2 + mask` with the
-    cause bitmask island 1, cantilever 2, long span 4 (states 3–9). 2.9.6 already encodes up
-    to 254 states and can remap them (`TriangleSelector.hpp:36-60`, `395`); support paint
-    used only states 0–2 so far. Undo/redo, copy, split and invalidation therefore work
-    unchanged. The slicer treats states 3–9 as enforcers.
+  itself: in paint states of its own, which the slicer projection treats as enforcers.
+  Undo/redo, copy, split and invalidation then work unchanged.
+  - **Storage.** v1 (plan D3): state `2 + mask` with the cause bitmask island 1,
+    cantilever 2, long span 4 (states 3–9). 2.9.6 already encodes states up to 254 and can
+    remap them (`TriangleSelector.hpp:36-60`, `395`); support paint used only states 0–2 so
+    far. The fork's projection (`PrintObject.cpp:3429-3457`, plan §5) collects states 1 and
+    3–9 as enforcers.
   - **Painting rule.** Tool paint never changes manual states (enforcer, blocker). It adds
     its cause bit to auto states. A run first clears all auto states.
-  - **3MF.** On export, auto states are baked into plain enforcers in the standard attribute,
-    so stock PrusaSlicer slices the same and never meets states ≥ 3 (its GUI draws them as
-    blockers and can crash on them in a seed fill, `GLGizmoPainterBase.cpp:1032`, `1044`).
-    The true states go into a fork-only per-triangle attribute
-    `slic3rpe:ext_custom_supports`, which the fork prefers on load. A stock re-save turns
-    auto paint into manual enforcers. The painting version does not change: states ≤ 16
-    still need version 1 (`TriangleSelector.cpp:2061-2065`).
-  - **Manual erase and blockers.** There is no suppression mask. Erasing auto paint by hand
-    removes it until the next run; a blocker keeps an area free permanently (P5). The panel
-    says so. Painting over auto paint by hand turns it into manual paint: the user wins.
+  - **3MF.** Saved files must slice the same in stock PrusaSlicer. v1 (plan D19): on export,
+    auto states are baked into plain enforcers in the standard attribute, so stock never
+    meets states ≥ 3 (its GUI draws them as blockers, `GLGizmoPainterBase.cpp:1044-1046`,
+    and can crash on them in a seed fill, `1032`, `1044`). The true states go into a
+    fork-only per-triangle attribute `slic3rpe:ext_custom_supports`, which the fork prefers
+    on load. A stock re-save turns auto paint into manual enforcers. The painting version
+    does not change: states ≤ 16 need only version 1 (`TriangleSelector.cpp:2061-2065`).
+  - **Manual erase and blockers.** v1 (plan D8): there is no suppression mask. Erasing auto
+    paint by hand removes it until the next run; a blocker keeps an area free permanently
+    (P5). The panel says so. Painting over auto paint by hand turns it into manual paint: the
+    user wins.
   - **Existing button.** Automatic painting erases all paint, auto paint included; the tool
     then shows its result as stale.
   - **Mesh edits** reset all paint, auto paint included.
@@ -886,8 +911,8 @@ level.
     blocker clearance in §5.2.
   - **Advisory only**, never a precondition:
     - interface layers > 0 (the PrintConfig default is 3, `PrintConfig.cpp:3436`) leave
-      steep slope fronts and tail rings unsupportable (§5.1). This is shown only after a run
-      that has such needs, together with the side effects of 0;
+      steep slope fronts and tail rings unsupportable (§5.1). v1 shows this only after a run
+      that has such needs, together with the side effects of 0 (plan D30);
     - `K_max < tip_spacing/2` breaks the area model of the contact (§5.1).
 - **P8 — report.** Unsatisfied needs are listed per cause and level, with layer and position.
   Possible states:
@@ -1025,8 +1050,8 @@ Long-span painting and stability are follow-ups. v1 implements exactly this capa
 | `W_stiff`, `H_tail` | island tail zone (inscribed width) | 3 mm / 16 mm |
 | `d_min` | opening below which a cavity counts as closed | a few branch diameters; v1: no cavity detection |
 | `G` | gap band next to `L_{n−1}` counted as supported (§5.1) | `xy_min` (derived) |
-| tip spacing | `connect_length` of the slicer (§5.1) | derived; ≈ 3 mm at stock defaults |
-| margin | tolerance at the edge of `R_n`: flags only (§5.1) | about one branch radius |
+| tip spacing | `connect_length` of the slicer (§5.1) | derived; ≈ 3.1 mm at stock defaults |
+| margin | tolerance at the edge of `R_n`: flags only (§5.1) | about one branch radius; v1: not used |
 | plate policy | plate-preferred / strict | plate-preferred |
 | lowest painted level | may / should / must; needs below are reported, not planned (§6) | v1: must, or must + should (default) |
 
@@ -1040,7 +1065,8 @@ Long-span painting and stability are follow-ups. v1 implements exactly this capa
 - One side of a circular ceiling of radius R accumulates up to `0.41·R` before its top.
 
 **How to read the table.** Every row follows from §2–§5. The column **Hyp.** names the
-hypothesis the row depends on. The table becomes the test catalogue.
+hypothesis the row depends on. The table becomes the test catalogue. The v1 expectations
+(zones instead of rows, long spans report only) are in plan §7.2.
 
 | Case | Expected | Reason | Hyp. |
 |---|---|---|---|
@@ -1091,7 +1117,7 @@ hypothesis the row depends on. The table becomes the test catalogue.
 | Outstretched figurine arm, 30° underside | zone beyond ≈ 7.1 mm, branches to the plate | cantilever, reachable | H1 |
 | Chin over chest | should: report; must: on the model + warning (strict: warning) | cantilever, unreachable | H1 |
 | Closed cavity with a 60 mm flat ceiling | report only | trapped support | — |
-| Ball floating inside a cup | on the model + warning if the gap is ≥ 1 mm or the tip carries a roof, else reported as removed (strict: warning); the hemisphere above is one report entry if unplaced | island, unreachable; short branches survive only under a roof (§5.3) | — |
+| Ball floating inside a cup | on the model + warning if the gap is ≥ 1 mm or the tip carries a roof, else reported as "may be removed" (strict: warning); the hemisphere above is one report entry if unplaced | island, unreachable; short branches survive only under a roof (§5.3) | — |
 
 ## 11. Open questions
 
@@ -1113,6 +1139,10 @@ hypothesis the row depends on. The table becomes the test catalogue.
    with test prints.
 10. **Model tips in plate-preferred mode** ("some tips stand on the model"): acceptable, or
     trim the paint? Decide after host tests.
+11. **Gap band and roofs** (§5.1): should the band apply to roof contact at all? It matters
+    only when `r < 1.5·xy_min`.
+12. **Roof merges across causes** (P4, §5.2): v1 does not re-check earlier causes after a
+    later zone of the same layer merges into a roof.
 
 The open questions of the implementation are in `notes/plan.md` §11.
 
@@ -1191,7 +1221,7 @@ The state encoding of P6 therefore carries over to 3.0.
 | Bridge region `opening(L_n − L_{n−1}, ext_width/10)`; direction anchors = expansions into fill surfaces; edges on perimeters float | `PrintObject.cpp:1074`, `1104-1110`; `LayerRegion.cpp:319`, `470-505` |
 | Bridge flow kept when contact distance > 0; none at 0 | `PrintObject.cpp:1061-1063` |
 | Extra perimeters on overhangs: no reach limit; conditions | `PerimeterGenerator.cpp:790-986`, `864-866`, `1158-1159` |
-| Collision: own and lower layers `r + xy_min`, layers above tapered; tip queries use `xy_min`; no machine border; blockers never added | `TreeModelVolumes.cpp:49-63`, `109-110`, `302-304`, `465`, `480`, `486-489`, `521-530` |
+| Collision: own and lower layers `r + xy_min`, layers above tapered; tip queries use `xy_min`; no machine border; blocker volumes never added, painted blockers never read | `TreeModelVolumes.cpp:49-63`, `106`, `109-110`, `302-304`, `465`, `480`, `486-489`, `521-530` |
 | First support layer; overhang index in support-layer space; raft layers | `TreeSupport.cpp:1300-1306`; `TreeSupportCommon.cpp:147-176` |
 | Tip path: forbidden area (avoidance or collision), overhang minus forbidden, remainder pushed out by `extra_outset` | `TreeSupport.cpp:1323-1366` |
 | Roof path: per component, ≥ `minimum_roof_area` one layer lower, roof lines check, `supports_roof` | `TreeSupport.cpp:1122-1170`, `1179`, `1414-1426`; `TreeSupportCommon.hpp:131` |
