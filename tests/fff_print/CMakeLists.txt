@@ -36,6 +36,13 @@ add_executable(${_TEST_NAME}_tests
     test_retraction.cpp
 	test_shells.cpp
 	test_skirt_brim.cpp
+	smart_supports_test_utils.hpp
+	test_smart_supports.cpp
+	test_smart_supports_eval.cpp
+	test_smart_supports_input.cpp
+	test_smart_supports_islands.cpp
+	test_smart_supports_reachability.cpp
+	test_smart_supports_slicer.cpp
 	test_support_material.cpp
 	test_thin_walls.cpp
 	test_trianglemesh.cpp

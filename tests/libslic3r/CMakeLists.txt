@@ -43,6 +43,14 @@ add_executable(${_TEST_NAME}_tests
     test_anyptr.cpp
     test_jump_point_search.cpp
     test_support_spots_generator.cpp
+    ../smart_supports_meshes.hpp
+    test_smart_supports_3mf.cpp
+    test_smart_supports_geometry.cpp
+    test_smart_supports_paint.cpp
+    test_smart_supports_reach.cpp
+    test_smart_supports_report.cpp
+    test_smart_supports_selector.cpp
+    test_smart_supports_tension.cpp
     test_layer_region.cpp
     ../data/prusaparts.cpp
     ../data/prusaparts.hpp
