@@ -397,7 +397,8 @@ public:
         text->Wrap(CONTENT_WIDTH * wxGetApp().em_unit());
         content_sizer->Add(text, 0, wxEXPAND);
         if (kind == Kind::Gate) {
-            add_button(wxID_YES, can_apply, _L("Apply and paint"));
+            if (can_apply)
+                add_button(wxID_YES, true, _L("Apply and paint"));
             add_button(wxID_NO, ! can_apply, _L("Paint anyway"));
         } else if (can_apply) {
             add_button(wxID_APPLY, true, _L("Apply"));
