@@ -21,6 +21,7 @@
 #include "TriangleMeshSlicer.hpp"
 #include "TriangleSelector.hpp"
 #include "MultipleBeds.hpp"
+#include "Support/SmartSupportStates.hpp"
 
 #include <float.h>
 
@@ -1595,6 +1596,38 @@ bool FacetsAnnotation::has_facets(const ModelVolume &mv, TriangleStateType type)
     return TriangleSelector::has_facets(m_data, type);
 }
 
+indexed_triangle_set FacetsAnnotation::get_facets_strict(const ModelVolume &mv, const std::vector<TriangleStateType> &states) const {
+    TriangleSelector selector(mv.mesh());
+    // Reset of TriangleSelector is done inside TriangleSelector's constructor, so we don't need it to perform it again in deserialize().
+    selector.deserialize(m_data, false);
+    return selector.get_facets_strict(states);
+}
+
+bool FacetsAnnotation::has_enforcer_like_facets() const {
+    return TriangleSelector::has_facets(m_data, TriangleStateType::ENFORCER) || this->has_auto_states();
+}
+
+bool FacetsAnnotation::has_auto_states() const {
+    if (m_data.triangles_to_split.empty())
+        return false;
+    for (uint8_t mask = 1; mask <= SmartSupports::cbAll; ++ mask)
+        if (TriangleSelector::has_facets(m_data, SmartSupports::auto_state(mask)))
+            return true;
+    return false;
+}
+
+TriangleSelector::TriangleSplittingData FacetsAnnotation::get_data_auto_baked(const ModelVolume &mv) const {
+    TriangleSelector selector(mv.mesh());
+    // Reset of TriangleSelector is done inside TriangleSelector's constructor, so we don't need it to perform it again in deserialize().
+    selector.deserialize(m_data, false);
+    selector.remap_states(SmartSupports::bake_map());
+    return selector.serialize();
+}
+
+bool FacetsAnnotation::same_paint(const TriangleSelector::TriangleSplittingData &a, const TriangleSelector::TriangleSplittingData &b) {
+    return a.triangles_to_split == b.triangles_to_split && a.bitstream == b.bitstream;
+}
+
 bool FacetsAnnotation::set(const TriangleSelector &selector) {
     TriangleSelector::TriangleSplittingData sel_map = selector.serialize();
     if (sel_map != m_data) {
@@ -1610,6 +1643,7 @@ void FacetsAnnotation::reset()
 {
     m_data.triangles_to_split.clear();
     m_data.bitstream.clear();
+    m_data.reset_used_states();
     this->touch();
 }
 
@@ -1618,24 +1652,32 @@ void FacetsAnnotation::reset()
 // changing it may break backwards compatibility !!!!!
 std::string FacetsAnnotation::get_triangle_as_string(int triangle_idx) const
 {
+    return triangle_as_string(m_data, triangle_idx);
+}
+
+std::string FacetsAnnotation::triangle_as_string(const TriangleSelector::TriangleSplittingData &data, int triangle_idx)
+{
     std::string out;
 
-    auto triangle_it = std::lower_bound(m_data.triangles_to_split.begin(), m_data.triangles_to_split.end(), triangle_idx, [](const TriangleSelector::TriangleBitStreamMapping &l, const int r) { return l.triangle_idx < r; });
-    if (triangle_it != m_data.triangles_to_split.end() && triangle_it->triangle_idx == triangle_idx) {
+    auto triangle_it = std::lower_bound(data.triangles_to_split.begin(), data.triangles_to_split.end(), triangle_idx, [](const TriangleSelector::TriangleBitStreamMapping &l, const int r) { return l.triangle_idx < r; });
+    if (triangle_it != data.triangles_to_split.end() && triangle_it->triangle_idx == triangle_idx) {
         int offset = triangle_it->bitstream_start_idx;
-        int end    = ++ triangle_it == m_data.triangles_to_split.end() ? int(m_data.bitstream.size()) : triangle_it->bitstream_start_idx;
+        int end    = ++ triangle_it == data.triangles_to_split.end() ? int(data.bitstream.size()) : triangle_it->bitstream_start_idx;
+        out.reserve(size_t(std::max(0, end - offset) / 4));
         while (offset < end) {
             int next_code = 0;
             for (int i=3; i>=0; --i) {
                 next_code = next_code << 1;
-                next_code |= int(m_data.bitstream[offset + i]);
+                next_code |= int(data.bitstream[offset + i]);
             }
             offset += 4;
 
             assert(next_code >=0 && next_code <= 15);
             char digit = next_code < 10 ? next_code + '0' : (next_code-10)+'A';
-            out.insert(out.begin(), digit);
+            out.push_back(digit);
         }
+        // The first code is the last digit of the string.
+        std::reverse(out.begin(), out.end());
     }
     return out;
 }
