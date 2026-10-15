@@ -21,6 +21,7 @@
 #include <cassert>
 #include <cinttypes>
 #include <cstddef>
+#include <functional>
 
 #include "Point.hpp"
 #include "TriangleMesh.hpp"
@@ -266,6 +267,42 @@ public:
         float m_z_range_bottom;
     };
 
+    // Cursor driven by caller-supplied predicates (fork, smart support painting). All predicates are evaluated in
+    // world coordinates (the cursor always uses world coordinates, trafo applied to the mesh vertices).
+    // select_patch() visits only the seed facets (no breadth-first expansion, is_facet_visible() is false), so the
+    // caller enumerates every original facet that may be touched. Single-threaded: the predicates are called from
+    // the thread running select_patch(); they may throw (e.g. CanceledException), see select_patch().
+    class PredicateCursor : public Cursor
+    {
+    public:
+        struct Predicates {                                 // world frame (trafo applied); called from one thread
+            // Is the point inside the painted region?
+            std::function<bool(const Vec3f &p)>                  point_inside;
+            // 3 = the whole triangle is certainly inside (it is painted as a whole), otherwise the number of
+            // vertices inside (0..2), the triangle is then split down to the edge limit. Empty: counts point_inside.
+            std::function<int (const std::array<Vec3f, 3> &tri)> classify;
+            // Does the triangle touch the painted region at all (only asked when classify() returned 0)?
+            std::function<bool(const std::array<Vec3f, 3> &tri)> touches;
+            // Original facets to visit; caller guarantees non-empty and passes seed_facets.front() as facet_start.
+            std::vector<int>                                     seed_facets;
+        };
+
+        PredicateCursor() = delete;
+        // edge_limit_world: triangles are not split below this edge length (world units, mm).
+        PredicateCursor(Predicates p, float edge_limit_world, const Transform3d &trafo);   // use_world_coordinates = true
+        ~PredicateCursor() override = default;
+
+        bool is_mesh_point_inside(const Vec3f &p) const override;
+        bool is_pointer_in_triangle(const Vec3f &, const Vec3f &, const Vec3f &) const override { return false; }
+        int  vertices_inside(const Triangle &tr, const std::vector<Vertex> &v) const override;
+        bool is_any_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &v) const override;
+        bool is_facet_visible(int, const std::vector<Vec3f> &) const override { return false; }
+        std::vector<int> get_facets_to_select(int, const std::vector<Vertex> &, const std::vector<Triangle> &, int, int) const override { return m_pred.seed_facets; }
+
+    private:
+        Predicates m_pred;
+    };
+
     struct TriangleBitStreamMapping
     {
         // Index of the triangle to which we assign the bitstream containing splitting information.
@@ -379,6 +416,8 @@ public:
     typename IndexedTriangleSetType<facet_info>::type get_facets_strict(const std::function<bool(const Triangle &)> &facet_filter) const;
     // Get facets at a given state. Triangulate T-joints.
     indexed_triangle_set get_facets_strict(TriangleStateType state) const;
+    // Get facets at any of the given states, with a single traversal. Triangulate T-joints.
+    indexed_triangle_set get_facets_strict(const std::vector<TriangleStateType> &states) const;
     // Get all facets. Triangulate T-joints.
     indexed_triangle_set get_all_facets_strict() const;
     // Get all facets with information about the colord of the facetd. Triangulate T-joints.
@@ -393,6 +432,14 @@ public:
     // Remap triangle states according to the given mapping. Merges split
     // triangles whose children end up with identical states after remapping.
     void remap_states(const std::map<TriangleStateType, TriangleStateType>& remap);
+
+    // Paint rule (fork, smart support painting). While a rule is set, select_patch() assigns
+    // rule(old_state, requested_state) to every leaf it paints instead of requested_state, and it recurses into
+    // fully covered split triangles instead of undividing them, so the paint of other states inside is kept.
+    // seed_fill_apply_*() and set_facet() ignore the rule. See Support/SmartSupportStates.hpp for the rules used.
+    using PaintRule = std::function<TriangleStateType(TriangleStateType old_state, TriangleStateType requested)>;
+    void set_paint_rule(PaintRule rule) { m_paint_rule = std::move(rule); }
+    void clear_paint_rule()             { m_paint_rule = nullptr; }
 
     // Clear everything and make the tree empty.
     void reset();
@@ -584,6 +631,11 @@ private:
 
     int m_free_triangles_head { -1 };
     int m_free_vertices_head { -1 };
+
+    // Paint rule applied by select_patch(), see set_paint_rule().
+    PaintRule m_paint_rule;
+    // Apply m_paint_rule to all leaves below facet_idx (fully covered triangle), keeping the subdivision.
+    void apply_paint_rule_recursive(int facet_idx, TriangleStateType type);
 };
 
 

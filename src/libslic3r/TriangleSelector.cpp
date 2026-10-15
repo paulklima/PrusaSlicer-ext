@@ -1640,6 +1640,13 @@ indexed_triangle_set TriangleSelector::get_facets_strict(TriangleStateType state
     return this->get_facets_strict([state](const Triangle &tr) { return tr.get_state() == state; });
 }
 
+indexed_triangle_set TriangleSelector::get_facets_strict(const std::vector<TriangleStateType> &states) const {
+    std::array<bool, TRIANGLE_STATE_TYPE_COUNT> state_mask{};
+    for (const TriangleStateType state : states)
+        state_mask[size_t(state)] = true;
+    return this->get_facets_strict([&state_mask](const Triangle &tr) { return state_mask[size_t(tr.get_state())]; });
+}
+
 indexed_triangle_set TriangleSelector::get_all_facets_strict() const {
     return this->get_facets_strict([](const Triangle &tr) { return true; });
 }
@@ -2459,6 +2466,30 @@ std::vector<int> TriangleSelector::HeightRange::get_facets_to_select(const int f
     }
 
     return facets_to_check;
+}
+
+TriangleSelector::PredicateCursor::PredicateCursor(Predicates p, float edge_limit_world, const Transform3d &trafo)
+    : Cursor(Vec3f::Zero(), 0.f, trafo, ClippingPlane()), m_pred(std::move(p))
+{
+    // The predicates work in world coordinates.
+    use_world_coordinates = true;
+    trafo_normal          = this->trafo.linear().inverse().transpose();
+    m_edge_limit          = edge_limit_world;
+}
+
+bool TriangleSelector::PredicateCursor::is_mesh_point_inside(const Vec3f &p) const
+{
+    return m_pred.point_inside && m_pred.point_inside(this->trafo * p);
+}
+
+int TriangleSelector::PredicateCursor::vertices_inside(const Triangle &tr, const std::vector<Vertex> &v) const
+{
+    return m_pred.classify ? m_pred.classify(this->transform_triangle(tr, v)) : Cursor::vertices_inside(tr, v);
+}
+
+bool TriangleSelector::PredicateCursor::is_any_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &v) const
+{
+    return m_pred.touches && m_pred.touches(this->transform_triangle(tr, v));
 }
 
 } // namespace Slic3r
