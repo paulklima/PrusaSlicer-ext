@@ -6,18 +6,25 @@
 #define slic3r_GLGizmoFdmSupports_hpp_
 
 #include "GLGizmoPainterBase.hpp"
+#include "SmartSupportsPanel.hpp"
 
 #include "slic3r/GUI/I18N.hpp"
 
+#include <memory>
+
 namespace Slic3r::GUI {
 
-class GLGizmoFdmSupports : public GLGizmoPainterBase
+class GLGizmoFdmSupports : public GLGizmoPainterBase, private SmartSupportsHost
 {
 public:
     GLGizmoFdmSupports(GLCanvas3D& parent, const std::string& icon_filename, unsigned int sprite_id)
         : GLGizmoPainterBase(parent, icon_filename, sprite_id) {}
+    ~GLGizmoFdmSupports() override;
 
     void render_painter_gizmo() override;
+
+    // Consumes the brush mouse events while smart painting runs (D18).
+    bool gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_position, bool shift_down, bool alt_down, bool control_down) override;
 
 protected:
     void on_render_input_window(float x, float y, float bottom_limit) override;
@@ -52,6 +59,22 @@ private:
     bool has_backend_supports();
     void auto_generate();
     void apply_data_from_backend();
+
+    // Smart support painting ("Paint where needed", plan §6.9): SmartSupportsHost.
+    ModelObject *model_object() override;
+    int  selected_instance() const override;
+    std::vector<std::unique_ptr<TriangleSelectorGUI>> &selectors() override { return m_triangle_selectors; }
+    void commit_paint(const wxString &snapshot_name) override;
+    void request_redraw(int delay_ms) override;
+    bool is_open() const override { return get_state() == On; }
+    CommonGizmosDataObjects::ObjectClipper *clipper() override;
+    GLCanvas3D &canvas() override { return m_parent; }
+
+    // Does the mouse hit the edited object (busy handling: clicks beside it still orbit / pan the view)?
+    bool mouse_over_object(const Vec2d &mouse_position) const;
+
+    std::unique_ptr<SmartSupportsPanel> m_smart;
+    bool m_smart_consumed_click = false;
 };
 
 
