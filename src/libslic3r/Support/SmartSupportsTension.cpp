@@ -232,7 +232,16 @@ void wide_tension(const ExPolygons &cprime, const Polygons &cp, const FrontGeom 
         Polygons all;
         for (const Polygons &s : strips)
             append(all, s);
-        const Polygons unclassified = diff(cp, union_(all));
+        all = union_(all);
+        Polygons unclassified = diff(cp, all);
+        if (! unclassified.empty()) {
+            // A line just outside D leaves a band of up to ½ spacing along boundaries parallel to θ: C' within one
+            // spacing of a strip takes that strip's level (worst wins); farther C' has no known span.
+            for (Polygons &s : strips)
+                if (! s.empty())
+                    append(s, intersection(unclassified, offset(s, float(step))));
+            unclassified = diff(unclassified, offset(all, float(step)));
+        }
         for (int l = 0; l < 4; ++ l) {
             append(bad[l], unclassified);
             for (int worse = l + 1; worse < 5; ++ worse)
