@@ -247,6 +247,12 @@ void TriangleSelector::select_patch(int facet_start, std::unique_ptr<Cursor> &&c
     // Save current cursor center, squared radius and camera direction, so we don't
     // have to pass it around.
     m_cursor = std::move(cursor);
+    // Fork (smart support painting): a PredicateCursor holds closures over its caller's locals. Never keep it beyond
+    // this call, also when one of its predicates throws (a cancel). Other cursors are kept as before.
+    struct DropPredicateCursor {
+        std::unique_ptr<Cursor> &cursor;
+        ~DropPredicateCursor() { if (dynamic_cast<const PredicateCursor*>(cursor.get()) != nullptr) cursor.reset(); }
+    } drop_predicate_cursor { m_cursor };
 
     // In case user changed cursor parameters size since last time, update triangle edge limit.
     set_edge_limit(m_cursor->get_edge_limit());

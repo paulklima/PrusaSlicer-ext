@@ -18,6 +18,7 @@
 
 #include "3mf.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <optional>
@@ -383,8 +384,9 @@ namespace Slic3r {
             std::vector<Vec3f> vertices;
             std::vector<Vec3i> triangles;
             std::vector<std::string> custom_supports;
-            // EXT_CUSTOM_SUPPORTS_ATTR per triangle, empty if not present.
-            std::vector<std::string> custom_supports_ext;
+            // EXT_CUSTOM_SUPPORTS_ATTR: (triangle index, value) of the triangles that have it, ascending. Sparse, so that
+            // files without the fork attribute cost nothing.
+            std::vector<std::pair<size_t, std::string>> custom_supports_ext;
             std::vector<std::string> custom_seam;
             std::vector<std::string> mm_segmentation;
             std::vector<std::string> fuzzy_skin;
@@ -2153,7 +2155,8 @@ namespace Slic3r {
             get_attribute_value_int(attributes, num_attributes, V3_ATTR));
 
         m_curr_object.geometry.custom_supports.push_back(get_attribute_value_string(attributes, num_attributes, CUSTOM_SUPPORTS_ATTR));
-        m_curr_object.geometry.custom_supports_ext.push_back(get_attribute_value_string(attributes, num_attributes, EXT_CUSTOM_SUPPORTS_ATTR));
+        if (std::string ext = get_attribute_value_string(attributes, num_attributes, EXT_CUSTOM_SUPPORTS_ATTR); ! ext.empty())
+            m_curr_object.geometry.custom_supports_ext.emplace_back(m_curr_object.geometry.custom_supports.size() - 1, std::move(ext));
         m_curr_object.geometry.custom_seam.push_back(get_attribute_value_string(attributes, num_attributes, CUSTOM_SEAM_ATTR));
         m_curr_object.geometry.fuzzy_skin.push_back(get_attribute_value_string(attributes, num_attributes, FUZZY_SKIN_ATTR));
 
@@ -2664,16 +2667,12 @@ namespace Slic3r {
             if (has_transform)
                 volume->source.transform = Slic3r::Geometry::Transformation(volume_matrix_to_object);
 
-            // Fork (smart support painting): the paint on supports of a volume with smart paint (states 3..9) is
+            // Fork (smart support painting): the paint on supports of a triangle with smart paint (states 3..9) is
             // stored twice, with these states baked to enforcers for other slicers and as is in the fork attribute.
-            // Prefer the fork attribute if the volume has it.
-            bool use_custom_supports_ext = false;
-            for (size_t i = 0; i < triangles_count && ! use_custom_supports_ext; ++ i) {
-                size_t index = volume_data.first_triangle_id + i;
-                assert(index < geometry.custom_supports_ext.size());
-                use_custom_supports_ext = ! geometry.custom_supports_ext[index].empty();
-            }
-            const std::vector<std::string> &custom_supports = use_custom_supports_ext ? geometry.custom_supports_ext : geometry.custom_supports;
+            // Per triangle, the fork attribute wins where present.
+            const auto &ext    = geometry.custom_supports_ext;
+            auto        ext_it = std::lower_bound(ext.begin(), ext.end(), size_t(volume_data.first_triangle_id),
+                                                  [](const std::pair<size_t, std::string> &e, size_t idx) { return e.first < idx; });
 
             // recreate custom supports, seam, mm segmentation and fuzzy skin from previously loaded attribute
             volume->supported_facets.reserve(triangles_count);
@@ -2686,7 +2685,10 @@ namespace Slic3r {
                 assert(index < geometry.custom_seam.size());
                 assert(index < geometry.mm_segmentation.size());
 
-                volume->supported_facets.set_triangle_from_string(i, custom_supports[index]);
+                const std::string *custom_supports = &geometry.custom_supports[index];
+                if (ext_it != ext.end() && ext_it->first == index)
+                    custom_supports = &(ext_it ++)->second;
+                volume->supported_facets.set_triangle_from_string(i, *custom_supports);
                 volume->seam_facets.set_triangle_from_string(i, geometry.custom_seam[index]);
                 volume->mm_segmentation_facets.set_triangle_from_string(i, geometry.mm_segmentation[index]);
                 volume->fuzzy_skin_facets.set_triangle_from_string(i, geometry.fuzzy_skin[index]);

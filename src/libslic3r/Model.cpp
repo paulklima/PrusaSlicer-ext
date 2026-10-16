@@ -1603,42 +1603,69 @@ indexed_triangle_set FacetsAnnotation::get_facets_strict(const ModelVolume &mv, 
     return selector.get_facets_strict(states);
 }
 
-// Is there a leaf of any of the states marked in state_mask? A single linear pass over the bitstream without
-// deserialization: the bitstream is a plain sequence of the prefix codes written by TriangleSelector::serialize()
-// (one tree per painted triangle, without gaps), thus the split codes are just skipped,
-// as in TriangleSelector::TriangleSplittingData::update_used_states().
+// Is there a leaf of any of the states marked in state_mask? One pass over the bitstream without deserialization: each
+// painted triangle's tree is walked from its bitstream_start_idx to the end of the tree with a depth counter, exactly as
+// TriangleSelector::has_facets(data, state) and deserialize() do, so data after the end of a tree (hand-made files) is
+// ignored the same way (review A M2). Leaf codes as TriangleSelector's decode_leaf_state(): states 0-2 in the first
+// nibble, 3-16 in a second one, 17-255 in two more.
 static bool has_facets_of_states(const TriangleSelector::TriangleSplittingData &data, const std::array<bool, TRIANGLE_STATE_TYPE_COUNT> &state_mask)
 {
     const std::vector<bool> &bits = data.bitstream;
-    size_t                   ibit = 0;
-    auto next_nibble = [&bits, &ibit]() {
-        int n = 0;
-        for (int i = 0; i < 4; ++ i)
-            n |= int(bits[ibit ++]) << i;
-        return n;
-    };
-    while (ibit + 4 <= bits.size()) {
-        const int code = next_nibble();
-        if ((code & 0b11) != 0)
-            // Split triangle, its children follow.
-            continue;
-        // Leaf: states 0-2 in the first nibble, states 3-16 in the second one, states 17-255 in two more nibbles.
-        int state = code >> 2;
-        if (state == 0b11) {
-            if (ibit + 4 > bits.size())
-                break;
-            if (const int second = next_nibble(); second != 0b1110)
-                state = second + 3;
-            else if (ibit + 8 > bits.size())
-                break;
-            else {
-                const int lo = next_nibble();
-                const int hi = next_nibble();
-                state = (lo | (hi << 4)) + 17;
+    std::vector<int>         parents_children;
+    parents_children.reserve(64);
+    for (const TriangleSelector::TriangleBitStreamMapping &tri : data.triangles_to_split) {
+        size_t ibit = size_t(std::max(0, tri.bitstream_start_idx));
+        bool   ok   = true;
+        auto next_nibble = [&bits, &ibit, &ok]() {
+            if (ibit + 4 > bits.size()) {
+                ok = false;
+                return 0;
             }
+            int n = 0;
+            for (int i = 0; i < 4; ++ i)
+                n |= int(bits[ibit ++]) << i;
+            return n;
+        };
+        // < 0: minus the number of children; >= 0: the leaf state.
+        auto num_children_or_state = [&next_nibble]() -> int {
+            const int code = next_nibble();
+            if (const int split_sides = code & 0b11; split_sides != 0)
+                return - split_sides - 1;
+            int state = code >> 2;
+            if (state == 0b11) {
+                if (const int second = next_nibble(); second != 0b1110)
+                    state = second + 3;
+                else {
+                    const int lo = next_nibble();
+                    const int hi = next_nibble();
+                    state = (lo | (hi << 4)) + 17;
+                }
+            }
+            return state;
+        };
+        auto hit = [&state_mask](int state) { return state < int(TRIANGLE_STATE_TYPE_COUNT) && state_mask[size_t(state)]; };
+        const int root = num_children_or_state();
+        if (! ok)
+            continue;
+        if (root >= 0) {
+            if (hit(root))
+                return true;
+            continue;
         }
-        if (state < int(TRIANGLE_STATE_TYPE_COUNT) && state_mask[state])
-            return true;
+        parents_children.clear();
+        parents_children.emplace_back(- root);
+        do {
+            if (-- parents_children.back() >= 0) {
+                const int state = num_children_or_state();
+                if (! ok)
+                    break;
+                if (state < 0)
+                    parents_children.emplace_back(- state);
+                else if (hit(state))
+                    return true;
+            } else
+                parents_children.pop_back();
+        } while (! parents_children.empty());
     }
     return false;
 }
@@ -1688,7 +1715,6 @@ void FacetsAnnotation::reset()
 {
     m_data.triangles_to_split.clear();
     m_data.bitstream.clear();
-    m_data.reset_used_states();
     this->touch();
 }
 
