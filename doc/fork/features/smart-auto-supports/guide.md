@@ -65,7 +65,7 @@ The existing **Automatic painting** button is unchanged. The differences:
 | | Automatic painting | Smart painting |
 |---|---|---|
 | Dome tops, hole ceilings | often painted | kept free up to Max dome opening |
-| Bridges | fixed limit of about 16 mm, shorter on curved parts | kept free up to Max bridge span (default 40 mm) |
+| Bridges | fixed limit of about 16 mm, shorter on curved parts | kept free up to Max bridge span (default 25 mm) |
 | Your own paint | erased | kept, and taken into account |
 | What was not painted | not shown | listed in a report, with a marker on the model |
 
@@ -154,7 +154,8 @@ Use "Apply and paint" there to run again with the new setting. Ctrl+Z reverts it
 2. Click **"Paint where needed »"** next to "Automatic painting". This opens the section **"Paint
    where needed (geometric)"** at the end of the window and scrolls to it.
 3. If the line "! … support settings do not match" appears, click **"Fix…"** and then **Apply**.
-4. Keep the default values for your first try.
+4. Keep the default values for your first try. After an update from an earlier version, click
+   **Reset to defaults** (under Advanced) once to get the current defaults.
 5. Click **"Paint where needed"**.
    - The panel shows "Slicing… 3 s", then a bar "Analysing… 42 %", each with a **Cancel** button.
    - The analysis itself usually takes a few seconds.
@@ -188,9 +189,9 @@ Click its header to open or close it.
 | Field | Default | Range | What it does | When to change it |
 |---|---|---|---|---|
 | **Paint**: Islands, Overhangs | both checked | – | Which causes get painted. Unchecked causes are still analysed and listed in the report. | Uncheck one to paint only the other kind. Switching one off never changes the other's paint. |
-| **Overhang angle** | your profile's "Overhang threshold", taken when you first open the section | 0–89°, 0 = auto | Slopes steeper than this angle (measured from horizontal) print without support. "auto" lets each layer overhang by half an extrusion width, as the slicer does (about 42° at 0.2 mm layers with a 0.4 mm nozzle). | Higher means more support. Use your printer's safe overhang angle. |
-| **Max overhang reach** | 3.0 mm | 0.5–20 mm | How far an overhang may reach, added up over the layers, before it gets support. | **Smaller means more support**, larger means less. Below about 1.5 mm (default organic settings), a note in the report warns that painted areas may get too few branch tips. |
-| **Max bridge span** | 40 mm | 5–200 mm | The longest bridge that prints without support. Longer bridges are only reported in this version. It also limits how wide the self-holding ring around a dome opening may be (half of this value). | Raise it if your printer bridges further; lower it if long bridges sag (bridges longer than the value are then reported). |
+| **Overhang angle** | 45° (not taken from your profile) | 0–89°, 0 = auto | Slopes steeper than this angle (measured from horizontal) print without support. "auto" lets each layer overhang by half an extrusion width, as the slicer does (about 42° at 0.2 mm layers with a 0.4 mm nozzle). | Higher means more support. Use your printer's safe overhang angle. |
+| **Max overhang reach** | 2.5 mm | 0.5–20 mm | How far an overhang may reach, added up over the layers, before it gets support. | **Smaller means more support**, larger means less. Below about 1.5 mm (default organic settings), a note in the report warns that painted areas may get too few branch tips. |
+| **Max bridge span** | 25 mm | 5–200 mm | The longest bridge that prints without support. Longer bridges are only reported in this version. It also limits how wide the self-holding ring around a dome opening may be (half of this value). | Raise it if your printer bridges further; lower it if long bridges sag (bridges longer than the value are then reported). |
 | **Support** | Critical and likely (recommended) | Critical only, Critical and likely | Which needs get painted. *Critical*: the print would fail (islands, and overhangs that reach more than 1.5 times Max overhang reach). *Likely*: the overhang is likely to droop or curl. | "Critical only" paints less, further out on each overhang. It lists the rest as "Likely droop, not painted (Critical only)". |
 | **Placement** | Prefer build plate | Prefer build plate, Build plate only | *Prefer build plate*: support stands on the plate wherever possible, and on the model only where a part would otherwise fail. *Build plate only*: never on the model; areas that cannot reach the plate are only reported. | Use "Build plate only" if you never want marks from branches on the model. Each choice needs a matching "Support on build plate only" setting ("Fix…" sets it). |
 
@@ -199,10 +200,28 @@ Open **Advanced** for the following:
 | Field | Default | Range | What it does | When to change it |
 |---|---|---|---|---|
 | **Reach fade height** | 1.0 mm | 0–5 mm | How much plain material above an overhang stops it from passing its reach on. Think of stairs: if the step between two ledges is taller than this, each ledge starts fresh. If it is lower, the ledges add up like one long slope. 0 judges each layer alone; long shallow slopes then never get support. | Raise it for stepped undersides (layered hair, robes) that droop in test prints. Lower it if such steps get too much support. |
-| **Max dome opening** | 40 mm | 0–200 mm | The largest opening (longest width) of a dome, funnel or counterbore ceiling that holds itself. It counts only for a ring around a single opening; slots and ceilings with several holes are judged as overhangs or bridges. | Lower it if large dome tops sag in your prints. 0 turns this exemption off. |
+| **Max dome opening** | 25 mm | 0–200 mm | The largest opening (longest width) of a dome, funnel or counterbore ceiling that holds itself. It counts only for a ring around a single opening; slots and ceilings with several holes are judged as overhangs or bridges. | Lower it if large dome tops sag in your prints. 0 turns this exemption off. |
 | **Accumulation angle**: "Same as overhang angle" | checked | – | When checked, the Overhang angle is used. | Uncheck it to set an angle of its own. |
 | Accumulation angle slider | 45° (at most the Overhang angle) | 10° up to the Overhang angle | Slopes steeper than this do not add to the reach. | Lower it to tolerate long slopes that are just a little flatter than the Overhang angle, without changing the Overhang angle. |
-| **Reset to defaults** | – | – | Resets **all** panel values. The Overhang angle is taken from your profile's "Overhang threshold" again. | |
+| **Reset to defaults** | – | – | Resets **all** panel values to the defaults in these tables. | After an update from an earlier version: your stored values stay until you click it. |
+
+### Why these defaults
+
+The defaults are set for a **Prusa MK4S with a 0.4 mm nozzle**, with a safety margin. They are
+starting values until test prints confirm them ([section 9](#the-defaults-are-starting-values)).
+- **Overhang angle 45°**: the MK4S profiles use 35° (SPEED) or 40° (STRUCTURAL, DETAIL), tuned
+  for PrusaSlicer's own automatic supports. 45° is 10° safer than 35°. The panel therefore no
+  longer takes the profile's "Overhang threshold". 0 = auto can still be chosen.
+- **Max overhang reach 2.5 mm**: OrcaSlicer's 3 mm limit counts per layer. Here the reach adds up
+  over the layers, so the default stays 0.5 mm below it.
+- **Max bridge span 25 mm**: bridges measured on Prusa printers held up to 25 mm (the longest
+  tested), and 28 mm worked on an MK3S. There is no measured maximum for the MK4S.
+- **Max dome opening 25 mm**: the same as the bridge span. There is no data that ring-shaped
+  ceilings hold further.
+
+The panel keeps the values it stored before an update (for example the angle taken from your
+profile in an earlier version, or 3.0 / 40 / 40 mm). Click **Reset to defaults** (under Advanced)
+to use the defaults above.
 
 ### Buttons and lines below the fields
 
@@ -419,10 +438,11 @@ The paint after an undo is exactly the undone state. The panel then says:
 
 ### The defaults are starting values
 
-In this version the defaults have not yet been tuned with test prints. This applies to Max
-overhang reach, Max bridge span, Max dome opening, Reach fade height, and the fixed internal values
-(tolerated bumps, thin tips, the critical level at 1.5 times the reach). Print a test piece with
-your printer and filament, then adjust:
+The defaults are chosen for a Prusa MK4S with a 0.4 mm nozzle, with a safety margin
+([Why these defaults](#why-these-defaults)), but they have not yet been confirmed with test prints.
+This applies to the Overhang angle, Max overhang reach, Max bridge span, Max dome opening, Reach
+fade height, and the fixed internal values (tolerated bumps, thin tips, the critical level at 1.5
+times the reach). Print a test piece with your printer and filament, then adjust:
 - overhang edges droop or curl: lower **Max overhang reach**, or choose "Critical and likely";
 - too much support on long, even slopes: raise **Max overhang reach**; if these slopes are only a
   little flatter than the Overhang angle, lower the **Accumulation angle** instead;

@@ -281,6 +281,38 @@ are their own trees once the toes are grounded). Run time unchanged (≈ 12–27
 | full `libslic3r_tests` | 293 test cases: 292 passed, 1 failed as expected (arc welder `[!shouldfail]`) |
 | full `fff_print_tests` | 207 test cases / 219 758 assertions passed |
 
+## 11. Defaults for MK4S (0.4 nozzle, with safety margin)
+
+Decided with the user after host test 1: the product defaults of `UserParams` target a Prusa MK4S with a 0.4 mm
+nozzle, with a safety margin. The theory values (theory §9) stay the test reference. Starting values until test prints.
+
+| Field | Old | New | Reason |
+|---|---|---|---|
+| Overhang angle `alpha_deg` | 0 = auto; the panel took the object's `support_material_threshold` on first opening (MK4S SPEED 35°, STRUCTURAL / DETAIL 40°) | 45°, fixed | Prusa's 35–40° are for its own automatic supports; the user considers 35° too aggressive; 10° margin over SPEED |
+| Max overhang reach `K_max` | 3.0 mm | 2.5 mm | OrcaSlicer's 3 mm is per layer, ours accumulates; 0.5 mm margin |
+| Max bridge span `B_max` | 40 mm | 25 mm | measured bridges on Prusa printers: 25 mm (test maximum), 28 mm fine on an MK3S; no measured MK4S maximum |
+| Max dome opening `B_ceil` | 40 mm | 25 mm | = `B_max`; no data that ring ceilings hold further |
+
+Reach fade height, accumulation angle, level and placement are unchanged.
+
+- **Panel**: the D5 first-value rule is gone (`m_alpha_pending`, `ensure_alpha()` removed). The AppConfig fallbacks and
+  "Reset to defaults" use `UserParams{}`. Stored AppConfig values stay as they are (no migration). 0 = auto stays
+  selectable. AppConfig is still written only on user actions (review C m7). The tooltips name the default and its
+  reason in one clause.
+- **Tests**: `theory_user_params()` (`tests/smart_supports_meshes.hpp`) sets α 45, `K_max` 3, `B_max` 40, `B_ceil` 40,
+  `H_s` 1 explicitly; `test_params()`, both `ref_params()` and the island / slicer helpers use it, so the reference cases
+  do not follow the product defaults. New `[sas-input]` case "UserParams defaults: Prusa MK4S 0.4 with a safety margin"
+  (also `K_max ≥ tip_spacing/2` at the 2.9.6 support defaults: 2.5 ≥ 1.53, no ReachBelowTipSpacing note).
+- **Docs**: guide §4 (defaults, "Why these defaults", Reset after an update) and §9, theory §9 (v1 defaults note),
+  README host checklist (T-shape paint beyond ~2.5 mm).
+
+| Check | Result |
+|---|---|
+| `libslic3r_tests "[SmartSupports]"` | 63 test cases / 29 250 assertions passed |
+| `fff_print_tests "[SmartSupports]"` | 81 test cases / 7 896 assertions passed |
+| `slic3rutils_tests "[SmartSupports]"` (lane 2) | 1 test case / 15 assertions passed |
+| lane 2 `PrusaSlicer` | built and linked, no warnings in feature files |
+
 ## Remaining known limitations and risks
 
 - **Upstream asserts (Debug builds of the slicer itself, not our code).** Both are possible `fix/<id>` branches for

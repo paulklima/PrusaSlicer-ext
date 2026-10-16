@@ -65,7 +65,7 @@ enforcers (upstream, `notes/wp-log-wp5.md`):
 **On the host** (after the sandbox build passes; full checklist in plan §7.3):
 - Panel: fields and collapse state persist; the gizmo window stays on the canvas at
   1366×768 / 1920×1080, 100 % / 150 %, and scrolls; the report window sits right of it.
-- T-shape: Paint → "Slicing…" → "Analysing… %" → cyan paint beyond ~3 mm; one undo removes
+- T-shape: Paint → "Slicing…" → "Analysing… %" → cyan paint beyond ~2.5 mm; one undo removes
   it. Hollow dome: nothing painted (Automatic painting paints its top).
 - Manual paint: enforcers and blockers stay, nothing is painted inside a blocker ("Kept free
   by your blocker"); unchecking a cause and running again removes its paint; "Remove smart
