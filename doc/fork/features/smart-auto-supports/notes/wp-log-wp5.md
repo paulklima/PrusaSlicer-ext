@@ -213,6 +213,74 @@ Verification of the fix round:
 | full `fff_print_tests` | 205 test cases / 219 580 assertions passed |
 | bare plain 2.9.6, asserts on (`bare-build.sh 61a8059ab3`) | `libslic3r_tests "[SmartSupports]"` 62 / 28 671 passed; `fff_print_tests "[SmartSupports]"` without the upstream-asserting cross-check 77 / 7 672 passed; no warnings in feature files |
 
+## 10. Host test 1: foot model
+
+**Report.** On a foot skeleton standing on its sole (one object, 1.25M triangles, 100 × 279 × 95 mm, 475 layers; plain 3MF
+from another program, not in the repository) many islands got no island paint: "Painted 141 areas (islands 53, overhangs
+88)", "32 problems, 117 notes" (auto α, reach 3, critical only, prefer plate).
+
+**Diagnosis** (hidden debug harness, uncommitted; 0.4 nozzle, 0.2 layers, organic, interface 0 matches the user's counts
+best). Every downward local minimum of the mesh (43 with a prominence ≥ 0.3 mm) was detected as an island tree slice;
+nothing was wrongly grounded, filtered or silently lost. Two rules folded the islands away:
+1. **Near-bed starts.** Three toe tips float 0.12–0.35 mm above the bed: they miss layer 0 and start on layers 1–2, where
+   `tips_possible()` is false. Their `NoTipLayer` residual marked the **whole island tree** unplaced, and each tree was a
+   whole toe ray (≈ 7000–8100 mm³, merging with the foot only at z 35–41 mm). Every later island of the toe (16 knuckle
+   minima at z 0.4–34 mm) folded into it unpainted; 14 of the 18 "Too close to the bed" rows started at z 1.4–34 mm.
+2. **Per-tree folding.** With interface layers > 0, any leftover island piece (typically an `InterfaceGap` tail ring) marked
+   the whole tree, so later sibling islands folded as well (4 more minima at interface 3).
+Folded rows also inherited the first row's state and reason.
+
+**Fixes** (`fix(smart-auto-supports): …`):
+- **Plate-resting near-bed starts** (`SmartSupportsBase.cpp`): below `first_tip_layer()` = `max(0, z_top + 2 − raft)`
+  (shared with `Reachability::tips_possible()`, `SmartSupportsInternal.hpp`) a slice without (strong) contact below hangs
+  at most `z_top + 1` layers above the plate and nothing can be placed under it; it is laid onto the plate like layer 0:
+  its weak contact is cleared, its fronts are dropped and it is grounded (`bed`). Weak contact applies again from the
+  first tip layer on (a tiny tip still makes the next layer an island start there).
+- **Island starts** (`IslandStart`, `LayerGeom::slice_start`, `tail_starts`): every bad tree slice is a start. Tags of
+  ungrounded material, island sources and tails are start ids; `LayerEvaluator::mark_unplaced(pieces)` marks the start
+  whose source region covers most of a residual piece (`mark_tree_unplaced` remains for tests); the planner keeps the
+  marking layer per start. Only material hanging from that start folds.
+- **Own report row** (`ReportState::HangsFromUnplacedIsland`, a note): "Rests on an island that cannot be supported",
+  advice "This part grows from an island listed under Problems; it is supported only if that island is." The
+  verification treats it as reported (like the other unplaced states).
+- Fix A (do not mark for `NoTipLayer`) is not needed: near-bed starts no longer exist.
+
+**Foot model, before → after** (debug harness, same settings):
+
+| | interface 0 | interface 3 |
+|---|---|---|
+| painted areas (islands / overhangs) | 156 (71 / 85) → 176 (93 / 83) | 115 (39 / 76) → 137 (66 / 71) |
+| report problems / notes | 31 / 113 → 12 / 119 | 93 / 102 → 74 / 121 |
+| downward minima in island trees without paint | 16 of 43 → 0 of 38 | 20 of 43 → 0 of 38 |
+| island need left after painting (re-evaluated with the actual paint) | 499 mm² → 2.1 mm² | 643 mm² → 143 mm² (InterfaceGap rings) |
+
+After the fix the 4 toe-tip minima rest on the plate (no need) and 1 is a tolerated bump; trees 32 → 41 (the knuckles
+are their own trees once the toes are grounded). Run time unchanged (≈ 12–27 s for `run()` on this model).
+
+**Tests** (all `[SmartSupports]`):
+- `[sas-islands]` "Island starts: …": toe with the tip at z 1 → one tree, four starts with their own tails; tips 0.15 /
+  0.35 above the bed → no start or tree below the first tip layer, the tip's slices grounded without fronts, the knuckles
+  their own trees.
+- `[sas-reference]` "Host test 1: …": tips 0.15 / 0.35 → no island `NoTipLayer`, no folded row, no island problem, every
+  knuckle's first slice ≥ 90 % under island paint; tip at z 1 with interface 3 → `InterfaceGap` rows for the tip, the
+  knuckles still painted, folded rows are notes without a why.
+- `[sas-geometry]` `first_tip_layer()` equals `Reachability::tips_possible()` for z_top 0–3 and rafts 0–8.
+- Mutation check (temporary switches, not committed): without the plate rule the near-bed section fails (NoTipLayer and
+  folded rows), with per-tree marking the interface-3 section fails (knuckles unpainted).
+- Updated with reason: ball in a cup, plate only (the cap hanging from the unplaceable ball is now one
+  `HangsFromUnplacedIsland` note over 10 layers next to the 1-layer `Unplaceable/NotReachable` row, was one merged
+  `Unplaceable` row); the floating-sphere folding test compares with the start id; the report group test covers the new
+  state.
+
+| Check | Result |
+|---|---|
+| `libslic3r_tests "[SmartSupports]"` | 63 test cases / 29 250 assertions passed |
+| `fff_print_tests "[SmartSupports]"` | 80 test cases / 7 886 assertions passed |
+| `slic3rutils_tests "[SmartSupports]"` (lane 2) | 1 test case / 15 assertions passed |
+| lane 2 `PrusaSlicer` | built and linked |
+| full `libslic3r_tests` | 293 test cases: 292 passed, 1 failed as expected (arc welder `[!shouldfail]`) |
+| full `fff_print_tests` | 207 test cases / 219 758 assertions passed |
+
 ## Remaining known limitations and risks
 
 - **Upstream asserts (Debug builds of the slicer itself, not our code).** Both are possible `fix/<id>` branches for
@@ -220,7 +288,8 @@ Verification of the fix round:
   - the slab projection's truncation vs rounding (a 3-line fix: use `v3f_scaled_to_contour_point()` for slab and
     horizontal edges);
   - `clip_narrow_corner`'s precondition in organic support smoothing.
-- **Host test pending** (plan §7.3). The GUI is only compile- and link-checked here.
+- **Host tests** (plan §7.3): host test 1 (foot model, §10) found and fixed the near-bed / per-tree folding issue; the
+  rest of the checklist is pending. The GUI is only compile- and link-checked here.
 - **MayMergeOntoModel** is a heuristic, calibrated on one geometry family. It is conservative by ≈ 2–3 mm and does not
   check on-model placements above plate ones.
 - **Paint under-approximation at prism borders.** E.g. the cone's tail rings next to the apex are painted only partly,
