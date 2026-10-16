@@ -414,6 +414,13 @@ static void add_cause_summaries(const AnalysisInput &in, const Plan &plan, std::
         if (count > 0 && ! acc.empty)
             out.push_back(acc.finish(in, count));
     }
+    // v1 never paints long-span rows (paintable = false): they are planned support of a cause that is always off. The
+    // plan keeps them as anchors (P3), so the placements above them rely on them like on an unchecked cause (review B m1).
+    // Their own rows are LongSpanNotPainted notes; no CauseDisabled row.
+    for (const Placement &p : plan.placements)
+        if (p.cause == Cause::LongSpan && ! p.paintable && p.level >= up.lowest_level)
+            if (const auto key = std::make_pair(p.layer, int(p.cause)); ! first_disabled || key < *first_disabled)
+                first_disabled = key;
     if (! first_disabled)
         return;
     EntryAcc acc;

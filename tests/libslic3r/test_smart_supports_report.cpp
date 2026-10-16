@@ -669,6 +669,21 @@ TEST_CASE("build_report: summary notes", "[SmartSupports][sas-report]")
         CHECK(entries_with(report, ReportState::CauseDisabled).empty());
         CHECK(entries_with(report, ReportState::ReliesOnDisabledCauses).empty());
     }
+    SECTION("all causes checked, a long-span row below painted placements (review B m1)") {
+        // v1 never paints rows; the placements planned after one rely on it like on an unchecked cause.
+        plan.placements.push_back(make_placement(Cause::LongSpan, Level::Should, 4, square(60., 0., 1.), false));
+        int more[2];
+        const std::vector<ReportEntry> report = build_report(in, plan, {}, more);
+        CHECK(entries_with(report, ReportState::CauseDisabled).empty());
+        const std::vector<ReportEntry> relies = entries_with(report, ReportState::ReliesOnDisabledCauses);
+        REQUIRE(relies.size() == 1);
+        CHECK(relies.front().count == 4);                         // layers 5, 5, 7, 8
+        CHECK(relies.front().layer_first == 5);
+        CHECK(relies.front().layer_last == 8);
+        // Lowest level Must: the should row is not planned support of the painted level.
+        in.params.user.lowest_level = Level::Must;
+        CHECK(entries_with(build_report(in, plan, {}, more), ReportState::ReliesOnDisabledCauses).empty());
+    }
 }
 
 TEST_CASE("build_report: empty plan and determinism", "[SmartSupports][sas-report]")
