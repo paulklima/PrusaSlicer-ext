@@ -1327,6 +1327,241 @@ TEST_CASE("run(): re-run on its own paint changes nothing; paint = false", "[Sma
     CHECK(r3.result.painted_areas[int(Cause::Cantilever)] == 0);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Robustness (WP5; reviews: re-runs, cancel, degenerate input, multi-volume objects, transforms, determinism, P4)
+
+namespace {
+
+struct VolumeSpec { indexed_triangle_set its; ModelVolumeType type = ModelVolumeType::MODEL_PART; Vec3d rotation = Vec3d::Zero(); };
+
+// One object with the given volumes (volume rotation about the volume origin), processed to posSlice.
+std::unique_ptr<SasPrint> make_volumes_print(const std::vector<VolumeSpec> &volumes, const DynamicPrintConfig &config)
+{
+    auto out = std::make_unique<SasPrint>();
+    DynamicPrintConfig full_config = DynamicPrintConfig::full_print_config();
+    full_config.apply(config);
+    ModelObject *object = out->model.add_object();
+    for (const VolumeSpec &v : volumes) {
+        ModelVolume *mv = object->add_volume(TriangleMesh(v.its), v.type);
+        if (v.rotation != Vec3d::Zero())
+            mv->set_rotation(v.rotation);
+    }
+    object->add_instance();
+    out->model.center_instances_around_point({ 100., 100. });
+    object->ensure_on_bed();
+    out->print.auto_assign_extruders(object);
+    out->print.apply(out->model, full_config);
+    if (std::string err = out->print.validate(); ! err.empty())
+        throw std::runtime_error("make_volumes_print: " + err);
+    out->print.set_status_silent();
+    process_to_slices(out->print);
+    return out;
+}
+
+// Paint, placements and report rows of two results are identical.
+void check_same_result(const Result &a, const Result &b)
+{
+    REQUIRE(a.paint.size() == b.paint.size());
+    for (size_t i = 0; i < a.paint.size(); ++ i)
+        CHECK(a.paint[i].data == b.paint[i].data);
+    REQUIRE(a.placements.size() == b.placements.size());
+    for (size_t i = 0; i < a.placements.size(); ++ i)
+        CHECK((a.placements[i].area == b.placements[i].area && a.placements[i].level == b.placements[i].level &&
+               a.placements[i].cause == b.placements[i].cause && a.placements[i].on_model == b.placements[i].on_model));
+    REQUIRE(a.report.size() == b.report.size());
+    for (size_t i = 0; i < a.report.size(); ++ i)
+        CHECK((a.report[i].state == b.report[i].state && a.report[i].area_mm2 == b.report[i].area_mm2));
+}
+
+} // namespace
+
+TEST_CASE("Robustness: repeated runs on their own paint are idempotent", "[SmartSupports][sas-reference]")
+{
+    // Islands and overhangs, real reachability, verification on.
+    const SasPrint &sp = cached_print("sphere_20_elevated", sphere_elevated, sas_config());
+    RunOptions opts;
+    opts.verification = 1;
+    const SasRun first = run_ref("re-run 1", sp, ref_params(), opts);
+    REQUIRE(! first.result.placements.empty());
+    bool any_changed = false;
+    for (const VolumePaint &vp : first.result.paint)
+        any_changed |= vp.changed;
+    CHECK(any_changed);
+    AnalysisInput in = first.input;
+    for (int k = 2; k <= 4; ++ k) {
+        for (size_t i = 0; i < in.volumes.size(); ++ i)
+            in.volumes[i].paint = first.result.paint[i].data;
+        const SasRun again = run_input(("re-run " + std::to_string(k)).c_str(), in, opts);
+        check_same_result(first.result, again.result);
+        for (const VolumePaint &vp : again.result.paint)
+            CHECK(! vp.changed);
+        CHECK(rows_with(again.result, ReportState::RemainingAfterPaint) == 0);
+    }
+}
+
+TEST_CASE("Robustness: a canceled run leaves nothing behind", "[SmartSupports][sas-reference]")
+{
+    const SasPrint &sp = cached_print("sphere_20_elevated", sphere_elevated, sas_config());
+    const AnalysisInput in = input_of(sp);
+    RunOptions opts;
+    opts.verification = 1;
+    const Result before = run(in, opts, [] { return false; }, [](int) {});
+    for (int threshold : { 5, 30, 60, 85 }) {
+        std::atomic<bool> flag { false };
+        CHECK_THROWS_AS(run(in, opts, [&flag] { return flag.load(); }, [&flag, threshold](int pct) { if (pct >= threshold) flag = true; }),
+                        CanceledException);
+    }
+    // The prefetch thread of every canceled run is joined; nothing cached survives a run.
+    const Result after = run(in, opts, [] { return false; }, [](int) {});
+    check_same_result(before, after);
+}
+
+TEST_CASE("Robustness: degenerate inputs", "[SmartSupports][sas-reference]")
+{
+    const SasPrint &sp = cached_print("shelf_10x15", [] { return shelf_cube(10., 15.); }, sas_config());
+    SECTION("no volumes: planned, nothing to paint") {
+        AnalysisInput in = input_of(sp);
+        in.volumes.clear();
+        const SasRun r = run_input("no volumes", std::move(in));
+        CHECK(r.result.paint.empty());
+        CHECK(placement_area(r.result, Cause::Cantilever) == Approx(102.).epsilon(0.1));
+    }
+    SECTION("an empty layer in the middle") {
+        AnalysisInput in = input_of(sp);
+        const size_t  k  = in.layers.size() / 2;
+        in.layers[k].lslices.clear();
+        in.layers[k].slices.clear();
+        for (LayerInput::SliceInfo &si : in.layers[k + 1].slices)
+            si.below.clear();
+        for (LayerInput::SliceInfo &si : in.layers[k - 1].slices)
+            si.above.clear();
+        const SasRun r = run_input("empty middle layer", std::move(in));
+        // The layer above starts again in the air: an island (the whole cube section, right above the cube's collision:
+        // placed or reported).
+        CHECK(placements_of(r.result, Cause::Island).size() + size_t(rows_with(r.result, ReportState::Unplaceable)) >= 1);
+        CHECK(r.result.paint.size() == r.input.volumes.size());
+    }
+    SECTION("a volume without triangles") {
+        AnalysisInput in = input_of(sp);
+        in.volumes.front().mesh = std::make_shared<const TriangleMesh>();
+        in.volumes.front().paint = {};
+        const SasRun r = run_input("empty mesh", std::move(in));
+        REQUIRE(r.result.paint.size() == 2);
+        CHECK(! r.result.paint.front().changed);
+        CHECK(r.result.paint.back().changed);
+    }
+}
+
+TEST_CASE("Robustness: multi-volume object with a transformed part, a negative volume and a modifier", "[SmartSupports][sas-reference]")
+{
+    // The shelf of shelf_cube(10, 15) as a part rotated by 180° about Z (add_volume() centres the mesh, so the box maps
+    // onto itself: same geometry, non-identity volume matrix); a negative volume cuts a 2 × 4 hole through the zone; a
+    // parameter modifier changes nothing here.
+    const Parts ref = shelf_cube(10., 15.);
+    const std::vector<VolumeSpec> volumes {
+        { ref[0] },
+        { ref[1], ModelVolumeType::MODEL_PART, Vec3d(0., 0., M_PI) },
+        { box({ 26., 6., 17. }, { 28., 10., 21. }), ModelVolumeType::NEGATIVE_VOLUME },
+        { box({ 2., 2., 2. }, { 6., 6., 6. }), ModelVolumeType::PARAMETER_MODIFIER },
+    };
+    auto sp = make_volumes_print(volumes, sas_config());
+    const SasRun r = run_ref("multi-volume shelf", *sp, ref_params(), {});
+    REQUIRE(r.input.volumes.size() == 2);                       // model parts only
+    CHECK(! r.input.volumes[1].trafo.isApprox(r.input.volumes[0].trafo));
+    CHECK(placement_area(r.result, Cause::Cantilever) == Approx(102. - 8.).epsilon(0.1));
+    REQUIRE(r.result.paint.size() == 2);
+    CHECK(! r.result.paint[0].changed);                         // the cube's bottom rests on the bed
+    CHECK(r.result.paint[1].changed);
+    // The paint of the rotated part projects onto the planned zone (within the prism inflation e).
+    const std::vector<ExPolygons> proj = projected_paint(r);
+    for (const Placement &pl : r.result.placements) {
+        CHECK(mm2(intersection_ex(proj[pl.layer], pl.area)) > 0.9 * mm2(pl.area));
+        CHECK(mm2(diff_ex(proj[pl.layer], offset_ex(pl.area, scaled<float>(r.input.params.edge_limit) + scaled<float>(0.001)))) < 0.01);
+    }
+}
+
+TEST_CASE("Robustness: non-uniformly scaled instance", "[SmartSupports][sas-reference]")
+{
+    // shelf_cube(5, 15) scaled (2, 1, 1): a 10 deep, 15 long shelf on a 40 × 20 cube.
+    auto sp = make_transformed_print(shelf_cube(5., 15.), sas_config(), [](ModelInstance &mi) { mi.set_scaling_factor(Vec3d(2., 1., 1.)); });
+    const SasRun r = run_ref("shelf, scaled (2, 1, 1)", *sp);
+    CHECK(placement_layers(r.result).size() == 1);
+    CHECK(placement_area(r.result, Cause::Cantilever) == Approx(102.).epsilon(0.1));
+    bool changed = false;
+    for (const VolumePaint &vp : r.result.paint)
+        changed |= vp.changed;
+    CHECK(changed);
+}
+
+TEST_CASE("Robustness: determinism on a real mesh with real reachability", "[SmartSupports][sas-reference][slow]")
+{
+    const SasPrint &sp = cached_print("frog_legs_standing", [] { return data_mesh("frog_legs.obj", true, 1.); }, sas_config());
+    RunOptions opts;
+    opts.verification = 1;
+    const SasRun multi = run_ref("frog_legs, default threads", sp, ref_params(), opts);
+    SasRun single;
+    {
+        tbb::global_control one(tbb::global_control::max_allowed_parallelism, 1);
+        single = run_ref("frog_legs, 1 thread", sp, ref_params(), opts);
+    }
+    CHECK(! multi.result.placements.empty());
+    check_same_result(multi.result, single.result);
+}
+
+TEST_CASE("Robustness (P4): painted manual enforcers never add needs", "[SmartSupports][sas-reference]")
+{
+    // Shelf 10 × 15: manual enforcer paint (brush) on the outer part of the shelf bottom.
+    const SasPrint &sp = cached_print("shelf_10x15", [] { return shelf_cube(10., 15.); }, sas_config());
+    AnalysisInput   in0 = input_of(sp), in1 = in0;
+    VolumeInput    &shelf = in1.volumes[1];
+    {
+        TriangleSelector sel(*shelf.mesh);
+        const indexed_triangle_set &its = shelf.mesh->its;
+        Transform3d no_tr = shelf.trafo;
+        no_tr.translation() = Vec3d::Zero();
+        // Centre of the shelf's outer bottom edge in mesh space (add_volume() centred the mesh).
+        const BoundingBoxf3 bb = shelf.mesh->bounding_box();
+        const Vec3f centre(float(bb.max.x()), float(0.5 * (bb.min.y() + bb.max.y())), float(bb.min.z()));
+        for (size_t f = 0; f < its.indices.size(); ++ f)
+            if (its_face_normal(its, int(f)).z() < -0.5f)
+                sel.select_patch(int(f), std::make_unique<TriangleSelector::Sphere>(centre, centre + Vec3f(0.f, 0.f, -10.f), 4.f, no_tr,
+                                                                                   TriangleSelector::ClippingPlane()),
+                                 TriangleStateType::ENFORCER, no_tr, true);
+        shelf.paint = sel.serialize();
+    }
+    auto needs_of_pass = [](const AnalysisInput &in) {
+        const BaseModel base = build_base_model(in, {}, {});
+        std::vector<ExPolygons> E;
+        for (const LayerGeom &lg : base.layers)
+            E.push_back(lg.manual_enf);
+        Reachability reach(in);
+        const PassResult pass = evaluate_pass(in, base, reach, E, {}, {});
+        std::vector<double> out;
+        for (const LayerNeeds &ln : pass.layers) {
+            double a = 0.;
+            for (int c = 0; c < 3; ++ c)
+                for (int l = 0; l < 3; ++ l)
+                    a += mm2(ln.need[c][l]);
+            out.push_back(a);
+        }
+        return out;
+    };
+    const std::vector<double> without = needs_of_pass(in0), with = needs_of_pass(in1);
+    double grew = 0., total0 = 0., total1 = 0.;
+    for (size_t n = 0; n < without.size(); ++ n) {
+        grew = std::max(grew, with[n] - without[n]);
+        total0 += without[n];
+        total1 += with[n];
+    }
+    std::cout << "P4 painted enforcer: needs " << total0 << " → " << total1 << " mm², max growth " << grew << std::endl;
+    CHECK(grew < in0.params.A_min);
+    CHECK(total1 < total0);
+    // The plan around the manual paint: the manual area is kept, the planned area shrinks, nothing is dropped.
+    const SasRun r0 = run_input("shelf without manual paint", in0), r1 = run_input("shelf with manual paint", in1);
+    CHECK(placement_area(r1.result, Cause::Cantilever) < placement_area(r0.result, Cause::Cantilever));
+    CHECK(rows_with(r1.result, ReportState::WillBeDropped) == 0);
+}
+
 TEST_CASE("Verification adds nothing where the paint covers the plan", "[SmartSupports][sas-reference]")
 {
     struct Shape { const char *key; std::function<Parts()> parts; bool reachable; UserParams up; };
