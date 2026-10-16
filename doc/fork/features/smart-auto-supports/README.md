@@ -22,9 +22,12 @@ detected by comparing the layer slices.
 Aimed at organic supports: placements prefer positions whose branches reach the build
 plate, and each detector can be used alone or combined without changing the others.
 
-**Status: implementation (v1 in progress).** Plan: `notes/plan.md` (revision 4, reviewed in
-three rounds); specification: `notes/theory.md`. Work packages per plan §8; their progress
-and deviations are in `notes/wp-log*.md`.
+**Status: v1 implemented, sandbox-verified (WP5, 2026-10-16); host test (plan §7.3) pending.**
+All work packages are integrated; unit and reference tests pass, also with asserts on plain
+2.9.6; the analysis takes 1–3 s for 1000-layer models (`notes/timings.md`). Plan: `notes/plan.md`
+(revision 4, reviewed in three rounds); specification: `notes/theory.md`. Work packages per
+plan §8; their progress and deviations are in `notes/wp-log*.md`, the integration results and
+the known limitations in `notes/wp-log-wp5.md`.
 
 v1 scope (plan §0): a "Paint where needed" section at the end of the paint-on supports gizmo.
 It paints support enforcers for islands and overhangs (cantilevers) only where the slicer's
@@ -49,7 +52,14 @@ New module `src/libslic3r/Support/SmartSupports*` (analysis, pure libslic3r), GU
 ```
 tests/fff_print/fff_print_tests "[SmartSupports]"
 tests/libslic3r/libslic3r_tests "[SmartSupports]"
+tests/fff_print/fff_print_tests "[sas-reference-bench]"     # hidden: phase timings (notes/timings.md)
+tests/fff_print/fff_print_tests "[sas-merge-calibration]"   # hidden: MayMergeOntoModel vs the slicer
 ```
+
+With asserts on (Debug or `-UNDEBUG`), exclude `"Reachability: real contact cross-check against
+process()"`: stock 2.9.6 organic support asserts in `MutablePolygon.cpp:244` on its plain manual
+enforcers (upstream, `notes/wp-log-wp5.md`):
+`fff_print_tests "[SmartSupports]~\"Reachability: real contact cross-check against process()\""`.
 
 **On the host** (after the sandbox build passes; full checklist in plan §7.3):
 - Panel: fields and collapse state persist; the gizmo window stays on the canvas at
@@ -102,5 +112,7 @@ add nothing on this topic (`notes/theory.md` §12).
 - `notes/research-algo.md`, `notes/research-gui.md` — code research on 2.9.6 (libslic3r
   algorithm base; gizmo, paint storage, 3MF).
 - `notes/wp-log*.md` — per work package: exact deviations from the plan, decisions on
-  ambiguities, notes for later work packages.
+  ambiguities, notes for later work packages; `wp-log-wp5.md`: integration, settled reference
+  expectations, calibration, known limitations.
+- `notes/timings.md` — phase timings on real meshes vs the plan's budget.
 - `reviews/` — the plan reviews (`plan-review-{1..7}-*.md`, three rounds).

@@ -873,6 +873,7 @@ plan.residual += folded tree entries; TailWithoutDownwardFacets per tree (base.t
 - With interface layers > 0, needs can therefore reappear when a later zone merges with an earlier one. The union evaluation catches this for the zones of the same layer. Verification catches the rest.
 
 **#10 note.** With "Prefer build plate", the must-only on-model zone (c > 4.5) reduces neighbouring c only by `tip_d`. A should band `c ∈ (3, 3.7]` therefore remains and is reported as Unplaceable. This matches the theory (review 5 m9).
+*Settled by WP5 (wp-log-wp5.md): wrong. The on-model contact is a support anchor with ĉ = 0 (theory §2.2, §2.3), so the band between stem and contact has c ≤ 1.9 < K_max; nothing remains.*
 
 ### 3.10 Verification (D13; WP2c1b)
 
@@ -1307,9 +1308,9 @@ public:
 | 5 | Bridge 30 | none |
 | 6 | Bridge 80 | 1 long-span placement ± 1 mm of mid-span, should, not paintable; `LongSpanNotPainted` |
 | 7 | Dome R20 (outer R25, open), `B_ceil = 0` | first need z 19.0 ± 0.3 (hole r 6.3 ± 0.3), should; none below 18.5; default `B_ceil` → none |
-| 8 | Dome R30, `B_ceil = 20` | one ring at hole r 11.9 ± 0.5, should; none at hole r < 9.8 |
-| 9 | Holes Ø8 / Ø20 / Ø50 (blocks 20×20×20 / 40×20×40 / 70×20×70, depth 20) | none / max should / must |
-| 10 | T on 80×80 base | prefer plate: on-model (must points) + `OnModelFallback`, plus Unplaceable should bands `c ∈ (3, 3.7]`; plate only: no placements, Unplaceable |
+| 8 | Dome R30, `B_ceil = 20` | one ring at hole r 11.9 ± 0.5, should; none at hole r < 9.8 (WP5: the first layer whose hole edge passes c = K_max, 11.52 at 0.2 mm) |
+| 9 | Holes Ø8 / Ø20 / Ø50 (blocks 20×20×20 / 40×20×40 / 70×20×70, depth 20) | none / max should / must (WP5: Ø20 should only at 0.1 mm layers; Ø50 must only with "critical only" — with should planned, the first should band resets c, as on the sphere #11) |
+| 10 | T on 80×80 base | prefer plate: on-model (must points) + `OnModelFallback`, ~~plus Unplaceable should bands `c ∈ (3, 3.7]`~~ (WP5: none remain, see the §3.9 note); plate only: no placements, Unplaceable |
 | 11 | Sphere R20 on bed, `test_assume_reachable` | rings r 5.9 ± 0.6 and 12.1 ± 1.0, should; none < 5.2 or > 14.6 |
 | 12 | Sphere elevated | island placement at its first layer; then as #11 |
 | 13 | Wall 40°, 50 tall | first placement at 15.8 ± 1.6; none below 14.0 |
@@ -1324,7 +1325,7 @@ public:
 | 22 | Verification | `test_mutate_before_paint` drops one placement → `RemainingAfterPaint` |
 | 23 | Edge cases | empty, 1 layer, grounded cube; first layer 0.3 / layer 0.15; raft 2; 0.1 mm layers; scaled, mirrored, X-rotated, sinking |
 | 24 | Cancel | each phase → `CanceledException`, no partial result |
-| 25 | Benchmark `[.benchmark]` | `frog_legs.obj`, `extruder_idler.obj` ×3, `figurine_proxy` (sphere-heavy) — phase timings |
+| 25 | Benchmark `[.benchmark]` | `frog_legs.obj`, `extruder_idler.obj` ×3, `figurine_proxy` (sphere-heavy) — phase timings (WP5: `notes/timings.md`) |
 | 26 | Inverted 60° cone, floating apex | tail placements up to apex + 2.6 ± 0.3; no Unplaceable (review 5 B1) |
 | 26b | Inverted 75° cone; 60° cone at 0.1 mm layers with contact 0.2 | tail painted, no Unplaceable (review 7 M1) |
 | 27 | Interface layers 3 (PrintConfig default): #13 (40° wall) and #2 (shelf) | wall: Unplaceable with why `InterfaceGap`; `InterfaceLayers` advisory issue present and **not** in the non-advisory list. Shelf: placement accepted (roof covers the flat zone) |
