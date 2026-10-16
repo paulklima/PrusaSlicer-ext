@@ -6,6 +6,7 @@
 #include "SmartSupportsInternal.hpp"
 
 #include <cassert>
+#include <cmath>
 
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
@@ -24,6 +25,41 @@ static std::vector<float> layer_zs(const AnalysisInput &in)
     for (const LayerInput &layer : in.layers)
         zs.emplace_back(float(layer.slice_z));
     return zs;
+}
+
+// Facets in the slicer's slicing frame (WP5): slice_mesh_slabs() converts the vertices of the slab and horizontal edges
+// by truncation (to_2d(v).cast<coord_t>()), those of the edges lying on a slicing plane by rounding
+// (v3f_scaled_to_contour_point(), TriangleMeshSlicer.cpp). A vertex exactly on a slicing plane - TriangleSelector's
+// midpoint splits put many there, e.g. z 7.5 on a flank from z 5 to 15 - then gets two positions 1 nm apart and
+// chain_lines_by_triangle_connectivity() asserts (Release: a 1 nm kink; the slicer's own projection of the same paint is
+// affected the same way). The vertices are therefore transformed exactly as transform_mesh_vertices_for_slicing() does
+// (same float z, so the same slabs) and XY is rounded to whole scaled units, where both conversions agree. A mirroring
+// trafo flips the triangles, so that the face orientation stays the slicer's. Returns the trafo to pass with them.
+static Transform3d to_slicing_frame(indexed_triangle_set &its, const Transform3d &trafo)
+{
+    static constexpr const double s = 1. / SCALING_FACTOR;
+    if (trafo.matrix() == Transform3d::Identity().matrix()) {          // as the slicer's is_identity()
+        for (stl_vertex &v : its.vertices) {
+            v.x() = std::round(v.x() * float(s));
+            v.y() = std::round(v.y() * float(s));
+        }
+    } else {
+        Transform3d t = trafo;
+        t.prescale(Vec3d(s, s, 1.));
+        const Transform3f tf = t.cast<float>();
+        for (stl_vertex &v : its.vertices) {
+            v     = tf * v;
+            v.x() = std::round(v.x());
+            v.y() = std::round(v.y());
+        }
+        if (trafo.matrix().block(0, 0, 3, 3).determinant() < 0.)
+            its_flip_triangles(its);
+    }
+    // slice_mesh_slabs() prescales by (s, s, 1) again: diag(SCALING_FACTOR·s, ·, 1) becomes the float identity.
+    Transform3d back = Transform3d::Identity();
+    back.matrix()(0, 0) = SCALING_FACTOR;
+    back.matrix()(1, 1) = SCALING_FACTOR;
+    return back;
 }
 
 // Concatenates the per volume results layer by layer, in volume order (deterministic, plan §3.12).
@@ -65,12 +101,13 @@ std::vector<Polygons> project_states(const AnalysisInput &in, const std::vector<
                 // As FacetsAnnotation::get_facets_strict(): T-joints triangulated.
                 TriangleSelector selector(*volume.mesh);
                 selector.deserialize(paint, false);
-                const indexed_triangle_set facets = selector.get_facets_strict(states);
+                indexed_triangle_set facets = selector.get_facets_strict(states);
                 if (facets.indices.empty())
                     continue;
                 // As PrintObject::project_and_append_custom_facets(): the downward facing facets are projected upwards
                 // onto the slicing plane of their layer.
-                slice_mesh_slabs(facets, zs, volume.trafo, nullptr, &projected[volume_idx], throw_on_cancel);
+                const Transform3d trafo = to_slicing_frame(facets, volume.trafo);
+                slice_mesh_slabs(facets, zs, trafo, nullptr, &projected[volume_idx], throw_on_cancel);
             }
         });
     return append_per_volume(std::move(projected), in.layers.size());
