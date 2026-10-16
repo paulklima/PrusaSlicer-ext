@@ -803,7 +803,7 @@ Plan make_plan(const AnalysisInput &in, const BaseModel &base, Reachability &rea
 // Verification (plan §3.10, D13): E_act = projection of the actual paint (manual enforcers and the painted causes) plus
 // the enforcer volumes; deficit where (cover(F_plan) − cover(F_act)) ∩ O_n ≥ A_min; only then one evaluation pass with the
 // actual zones (plus the planned, unpainted ones, P3) from layer 0. Needs that the plan did not report already (residual
-// of the same layer ⊕ 0.5 mm) are RemainingAfterPaint.
+// of unplaced needs of the same layer ⊕ 0.5 mm) are RemainingAfterPaint.
 std::vector<Need> verify(const AnalysisInput &in, const BaseModel &base, Reachability &reach, const Plan &plan,
                          const std::vector<VolumePaint> &paint, const ThrowOnCancel &cancel_in)
 {
@@ -858,9 +858,17 @@ std::vector<Need> verify(const AnalysisInput &in, const BaseModel &base, Reachab
         return {};
 
     const PassResult        pass = evaluate_pass(in, base, reach, E_act, cancel, {});
+    // Only residual pieces that are unplaced needs (with the folded trees, which carry their tree's reason) are "already
+    // reported". The notes and flags of placed zones (PartlyOnModel, OnModelFallback, OnModelTooShort, MayMergeOntoModel,
+    // LongSpanNotPainted) carry the placement's area: a need left there because the paint falls short is exactly what
+    // the verification has to report (review B M1). BelowLowestLevel bands are not needs at the painted levels either.
+    auto unplaced = [](ReportState s) {
+        return s == ReportState::Unplaceable || s == ReportState::BlockedByUser || s == ReportState::WillBeDropped ||
+               s == ReportState::TailWithoutDownwardFacets;
+    };
     std::vector<ExPolygons> reported(in.layers.size());
     for (const Need &need : plan.residual)
-        if (need.layer < reported.size())
+        if (need.layer < reported.size() && unplaced(need.reason))
             append(reported[need.layer], need.area);
     std::vector<Need> out;
     const Level       lowest = p.user.lowest_level;
