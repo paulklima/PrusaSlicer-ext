@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
@@ -19,6 +20,7 @@
 #include <oneapi/tbb/global_control.h>
 
 #include "smart_supports_test_utils.hpp"
+#include "test_utils.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/PrintBase.hpp"
@@ -974,37 +976,110 @@ TEST_CASE("Reference #27: interface layers 3: wall InterfaceGap, advisory contra
     }
 }
 
-TEST_CASE("Reference #25: timings", "[.benchmark][sas-reference-bench]")
+namespace {
+
+// A mesh of tests/data, optionally stood up (rotated 90° about X) and scaled.
+Parts data_mesh(const char *file, bool stand_up, double scale)
 {
-    struct Shape { const char *name; std::function<Parts()> parts; };
+    indexed_triangle_set its = load_model(file).its;
+    if (stand_up)
+        its = rotate_x(std::move(its), 90.);
+    if (scale != 1.)
+        for (Vec3f &v : its.vertices)
+            v *= float(scale);
+    return { its };
+}
+
+double peak_rss_mb()
+{
+    std::ifstream status("/proc/self/status");
+    for (std::string line; std::getline(status, line);)
+        if (line.rfind("VmHWM:", 0) == 0)
+            return std::stod(line.substr(6)) / 1024.;
+    return 0.;
+}
+
+} // namespace
+
+// Phase timings (plan §3.13 budget: ≤ 30 s for a 1000-layer figurine on 8 cores). Each phase is timed alone, in run()'s
+// order: Phase A, collisions, the avoidance chain (serial here; run() computes it on the prefetch thread alongside the
+// plan), plan, paint, verification (the projection and contact check; plus one evaluation pass if the paint's contact falls
+// short of the plan somewhere), one full evaluation pass (that pass alone), report; then the whole run() with
+// verification on.
+TEST_CASE("Reference #25: phase timings", "[.benchmark][sas-reference-bench]")
+{
+    struct Shape { std::string name; std::function<Parts()> parts; };
     const std::vector<Shape> shapes {
+        { "frog_legs standing", [] { return data_mesh("frog_legs.obj", true, 1.); } },
+        { "frog_legs standing x2", [] { return data_mesh("frog_legs.obj", true, 2.); } },
+        { "extruder_idler", [] { return data_mesh("extruder_idler.obj", false, 1.); } },
+        { "extruder_idler x3", [] { return data_mesh("extruder_idler.obj", false, 3.); } },
         { "figurine_proxy", [] { return figurine_proxy(); } },
-        { "t_shape_on_80x80", [] { return t_shape(15., 10., 10., 20., 2., 80.); } },
-        { "hole_50", [] { return hole_block(50., 70., 20., 70.); } },
-        { "dome_20_25", [] { return dome(20., 25.); } },
-        { "sphere_20", sphere_on_bed },
-        { "slope_wall_40", [] { return slope_wall(40.); } },
+        { "sphere R 20", sphere_on_bed },
+        // ≈ 1M triangles (host checklist §7.3 #20): paint and projection scale with the triangles.
+        { "sphere R 20, 1M triangles", [] { return Parts{ translate(its_make_sphere(20., 2. * M_PI / 1000.), Vec3d(0., 0., 20.)) }; } },
+        { "figurine_proxy, 1M triangles", [] {
+              const double fa = 2. * M_PI / 600.;
+              return Parts{ its_make_cylinder(8., 20., fa), translate(its_make_sphere(20., fa), Vec3d(0., 0., 36.)),
+                            translate(its_make_sphere(15., fa), Vec3d(0., 0., 65.)), translate(its_make_sphere(10., fa), Vec3d(0., 0., 86.)) }; } },
     };
-    for (const Shape &shape : shapes) {
-        const SasPrint &sp = cached_print(shape.name, shape.parts, sas_config());
-        RunOptions opts;
-        opts.verification = 1;
-        std::vector<std::pair<int, double>> marks;
-        const auto t0 = std::chrono::steady_clock::now();
-        const AnalysisInput in = input_of(sp);
-        const Result r = run(in, opts, []() { return false; }, [&](int pct) {
-            marks.emplace_back(pct, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
-        });
-        auto at = [&marks](int pct) {
-            for (const auto &[p, t] : marks)
-                if (p >= pct)
-                    return t;
-            return marks.empty() ? 0. : marks.back().second;
-        };
-        std::cout << "[sas-bench] " << shape.name << ": " << in.layers.size() << " layers, total " << at(100) << " s (Phase A " << at(15)
-                  << ", plan " << at(80) - at(15) << ", paint " << at(90) - at(80) << ", verification + report " << at(100) - at(90)
-                  << "), " << r.placements.size() << " placements, " << r.report.size() << " report rows" << std::endl;
-    }
+    auto secs = [](auto t0) { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };
+    for (double h : { 0.2, 0.1 })
+        for (const Shape &shape : shapes) {
+            const auto t_slice0 = std::chrono::steady_clock::now();
+            auto       sp       = make_sliced_print(shape.parts(), sas_config({ { "layer_height", h }, { "first_layer_height", h } }));
+            const double t_slice = secs(t_slice0);
+            AnalysisInput in = input_of(*sp);
+            in.params.verification = true;
+            const ThrowOnCancel cancel = [] {};
+            auto t = std::chrono::steady_clock::now();
+            const BaseModel base = build_base_model(in, cancel, {});
+            const double t_a = secs(t);
+            Reachability reach(in);
+            t = std::chrono::steady_clock::now();
+            reach.compute_collisions(cancel);
+            const double t_coll = secs(t);
+            t = std::chrono::steady_clock::now();
+            reach.ensure(reach.tip_layer(base.last_layer_with_fronts), cancel);
+            const double t_chain = secs(t);
+            t = std::chrono::steady_clock::now();
+            const Plan plan = make_plan(in, base, reach, cancel, {});
+            const double t_plan = secs(t);
+            t = std::chrono::steady_clock::now();
+            const std::vector<VolumePaint> paint = paint_placements(in, plan.placements, in.params.user.paint_causes, in.params.user.lowest_level, cancel);
+            const double t_paint = secs(t);
+            t = std::chrono::steady_clock::now();
+            const std::vector<Need> residual = verify(in, base, reach, plan, paint, cancel);
+            const double t_verify = secs(t);
+            std::vector<ExPolygons> E(in.layers.size());
+            for (size_t n = 0; n < E.size(); ++ n)
+                E[n] = union_ex(union_ex(base.layers[n].manual_enf, plan.zones_paintable[n]), plan.zones_unpainted[n]);
+            t = std::chrono::steady_clock::now();
+            const PassResult pass = evaluate_pass(in, base, reach, E, cancel, {});
+            const double t_pass = secs(t);
+            int more[2];
+            t = std::chrono::steady_clock::now();
+            const std::vector<ReportEntry> report = build_report(in, plan, residual, more);
+            const double t_report = secs(t);
+            RunOptions opts;
+            opts.verification = 1;
+            t = std::chrono::steady_clock::now();
+            const Result r = run(in, opts, [] { return false; }, [](int) {});
+            const double t_run = secs(t);
+            size_t tris = 0, fronts = 0;
+            for (const VolumeInput &v : in.volumes)
+                tris += v.mesh->its.indices.size();
+            for (const LayerGeom &lg : base.layers)
+                fronts += lg.fronts.size();
+            std::cout << "[sas-bench] " << shape.name << " @ " << h << " mm: " << in.layers.size() << " layers, " << tris << " triangles, "
+                      << fronts << " fronts, " << plan.placements.size() << " placements, " << report.size() << " report rows | slicing "
+                      << t_slice << " s | Phase A " << t_a << " | collisions " << t_coll << " | avoidance chain " << t_chain << " | plan "
+                      << t_plan << " | paint " << t_paint << " | verification " << t_verify << " (" << residual.size()
+                      << " RemainingAfterPaint" << (t_verify > 0.5 * t_pass ? ", a deficit was re-evaluated" : "") << ") | full pass " << t_pass << " | report " << t_report << " | run() " << t_run << " s (" << r.placements.size()
+                      << " placements) | peak RSS " << peak_rss_mb() << " MB" << std::endl;
+            CHECK(r.placements.size() == plan.placements.size());
+            CHECK(pass.layers.size() == in.layers.size());
+        }
 }
 
 namespace {
