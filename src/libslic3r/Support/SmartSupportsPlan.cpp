@@ -236,7 +236,7 @@ ExPolygons Planner::blocker_zone(uint32_t layer) const
         append(src, base.layers[j].manual_blk);
     if (src.empty())
         return {};
-    return clearance > 0 ? offset_ex(union_ex(src), float(clearance)) : union_ex(src);
+    return clearance > 0 ? union_ex(offset_keep_thin(union_ex(src), float(clearance))) : union_ex(src);
 }
 
 // plate_part(Z, E) = Z ∩ cover(contact(E ∪ Z).plate) (theory §5.2), with the contact computed once here so that the
@@ -279,7 +279,7 @@ Level Planner::level_near(Cause cause, const ExPolygons &piece, coord_t radius) 
 {
     if (! piece.empty()) {
         const BoundingBox bb    = get_extents(piece).inflated(double(radius) + scaled<double>(0.01));
-        const Polygons    grown = radius > 0 ? offset(piece, float(radius)) : to_polygons(piece);
+        const Polygons    grown = radius > 0 ? offset_keep_thin(piece, float(radius)) : to_polygons(piece);
         for (int l = 2; l >= int(lowest); -- l)
             for (const ExPolygon &ex : L.need[int(cause)][l])
                 if (get_extents(ex.contour).overlap(bb) && ! intersection(grown, to_polygons(ex)).empty())
@@ -492,7 +492,7 @@ std::vector<Placement> Planner::stage_widen(Cause cause, const ExPolygons &needs
     if (Nw.empty())
         return {};
     const coord_t    K  = scaled<coord_t>(std::max(0., up.K_max));
-    const ExPolygons Zw = this->minus_blk(intersection_ex(L.cprime, offset(Nw, float(K))));
+    const ExPolygons Zw = this->minus_blk(intersection_ex(L.cprime, offset_keep_thin(Nw, float(K))));
     return this->as_placements(cause, this->plate_of(Zw, Nw), K);
 }
 
@@ -567,7 +567,7 @@ void Planner::accept(std::vector<Placement> &&accepted)
 void Planner::residual(Cause cause, const ExPolygons &tried, bool roof_rejected, bool exhausted)
 {
     const coord_t     K    = scaled<coord_t>(std::max(0., up.K_max)) + scaled<coord_t>(0.01);
-    const Polygons    near = tried.empty() ? Polygons() : offset(tried, float(K));
+    const Polygons    near = tried.empty() ? Polygons() : offset_keep_thin(tried, float(K));
     const BoundingBox nb   = get_extents(near);
     auto report = [&](Level level, Why w, ReportState reason, ExPolygons area) {
         ExPolygons kept = this->add_need(cause, level, w, reason, std::move(area));
@@ -755,7 +755,7 @@ void Planner::may_merge()
             if (dz > MergeHeightMm)
                 continue;
             const coord_t r = scaled<coord_t>(p.branch_diameter + (2. * MergeDescentMm + dz) * tan_a);
-            if (! get_extents(q.area).inflated(double(r)).overlap(pb) || intersection(offset(q.area, float(r)), to_polygons(pl.area)).empty())
+            if (! get_extents(q.area).inflated(double(r)).overlap(pb) || intersection(offset_keep_thin(q.area, float(r)), to_polygons(pl.area)).empty())
                 continue;
             n = pl.layer;
             this->add_need(pl.cause, pl.level, Why::None, ReportState::MayMergeOntoModel, pl.area);
@@ -870,7 +870,7 @@ std::vector<Need> verify(const AnalysisInput &in, const BaseModel &base, Reachab
                 if (! known_done) {
                     known_done = true;
                     if (! reported[n].empty())
-                        known = offset(reported[n], scaled<float>(VerifyMarginMm));
+                        known = offset_keep_thin(reported[n], scaled<float>(VerifyMarginMm));
                 }
                 ExPolygons rest = noise_filter(known.empty() ? ln.need[c][l] : diff_ex(ln.need[c][l], known), p);
                 if (rest.empty())

@@ -28,9 +28,10 @@ namespace {
 
 // Arc tolerance of the round offset L_{n−1} ⊕ w_n that defines S_n (plan §3.5, D24), mm.
 constexpr double ArcTolStep  = 0.001;
-// Arc tolerance of the cluster band offsets, mm. Clipper puts the arc vertices on the circle, so a band is
-// at most this much smaller than the exact ∪C ⊕ m.
-constexpr double ArcTolBand  = 0.005;
+// Arc tolerance of the cluster band offsets, mm. Clipper puts the arc vertices on the circle but rounds the number
+// of arc steps per vertex, so a band is up to ≈ 2.25 × this (plus ≈ 2 µm from the first step of offset_keep_thin)
+// smaller than the exact ∪C ⊕ m: ≤ 7 µm.
+constexpr double ArcTolBand  = 0.002;
 // Tolerance of the "lies on" tests (hoop rule §3.5, floating edges of the bridge directions), mm.
 constexpr double OnTol       = 0.002;
 // Hoop rule (§3.5): the matching slice hole may differ by this much in its bbox (mm) and in its area (relative);
@@ -272,10 +273,12 @@ void build_layer_geometry(const AnalysisInput &in, size_t n, LayerGeom &lg)
             any_wide     |= f.wide;
             any_one_hole |= f.C.holes.size() == 1;
         }
+        // Two-step offsets: a front thinner than 0.5 % of m (≈ 14 µm, slopes within ≈ 2° of α) would vanish in a plain
+        // offset() and leave its band empty (WP2c1a finding).
         const BoundingBox clip_box = cl.win.inflated(SCALED_EPSILON);
-        cl.band      = intersection_ex(offset(Cs, float(m), ClipperLib::jtRound, arc_band),
+        cl.band      = intersection_ex(offset_keep_thin(Cs, float(m), ClipperLib::jtRound, arc_band),
                                        ClipperUtils::clip_clipper_polygons_with_subject_bbox(L, clip_box));
-        cl.band_prev = intersection_ex(offset(Cs, float(m + lg.w), ClipperLib::jtRound, arc_band),
+        cl.band_prev = intersection_ex(offset_keep_thin(Cs, float(m + lg.w), ClipperLib::jtRound, arc_band),
                                        ClipperUtils::clip_clipper_polygons_with_subject_bbox(Lp, clip_box));
 
         // Bridge regions: the slicer's bottom surfaces L_n − L_{n−1} near the cluster, slivers removed.
@@ -544,6 +547,20 @@ BaseModel build_base_model(const AnalysisInput &in, const ThrowOnCancel &cancel,
     }
     report(100);
     return base;
+}
+
+Polygons offset_keep_thin(const ExPolygons &src, float delta, ClipperLib::JoinType join, double limit)
+{
+    if (src.empty())
+        return {};
+    if (delta <= 0.f)
+        return delta < 0.f ? offset(src, delta, join, limit) : to_polygons(src);
+    // Step 1 widens strips of any width ≥ 0.005·d1 to ≥ 2·d1 = 0.02·delta, far above step 2's 0.005·(delta − d1). Its
+    // arc vertices (≈ 0.4·d1 apart) are partly dropped by step 2: chords of ≤ 46° on radius d1, sagitta ≤ 0.08·d1.
+    const float    d1    = 0.01f * delta;
+    const double   lim1  = join == ClipperLib::jtRound ? std::min(limit, 0.02 * double(d1)) : limit;
+    const Polygons first = offset(src, d1, join, lim1);
+    return first.empty() ? Polygons() : offset(first, delta - d1, join, limit);
 }
 
 double feret_diameter(const Polygon &polygon)
