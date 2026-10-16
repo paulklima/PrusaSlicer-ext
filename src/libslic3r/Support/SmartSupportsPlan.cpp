@@ -796,7 +796,7 @@ Plan make_plan(const AnalysisInput &in, const BaseModel &base, Reachability &rea
 }
 
 // Verification (plan §3.10, D13): E_act = projection of the actual paint (manual enforcers and the painted causes) plus
-// the enforcer volumes; deficit where cover(F_plan) − cover(F_act) ≥ A_min; only then one evaluation pass with the
+// the enforcer volumes; deficit where (cover(F_plan) − cover(F_act)) ∩ O_n ≥ A_min; only then one evaluation pass with the
 // actual zones (plus the planned, unpainted ones, P3) from layer 0. Needs that the plan did not report already (residual
 // of the same layer ⊕ 0.5 mm) are RemainingAfterPaint.
 std::vector<Need> verify(const AnalysisInput &in, const BaseModel &base, Reachability &reach, const Plan &plan,
@@ -836,7 +836,15 @@ std::vector<Need> verify(const AnalysisInput &in, const BaseModel &base, Reachab
                 if (F_plan.empty())
                     continue;
                 const ExPolygons F_act = act.empty() ? ExPolygons() : reach.predict_F(act, uint32_t(n));
-                const ExPolygons lost  = diff_ex(reach.cover(F_plan, uint32_t(n)), F_act.empty() ? ExPolygons() : reach.cover(F_act, uint32_t(n)));
+                ExPolygons       lost  = diff_ex(reach.cover(F_plan, uint32_t(n)), F_act.empty() ? ExPolygons() : reach.cover(F_act, uint32_t(n)));
+                if (mm2(lost) < p.A_min)
+                    continue;
+                // Only contact over the overhang O_n = L_n − L_{n−1} supports anything (all needs lie in U_n ⊂ O_n). The mirrored
+                // F_grown (E ⊕ tip_d, miter) is not monotone in the outline of E: the paint's triangle outline loses offset
+                // corners in the air beyond the slice, which must not trigger a re-evaluation.
+                const BoundingBox lb = get_extents(lost).inflated(scaled<double>(0.01));
+                lost = intersection_ex(lost, diff(ClipperUtils::clip_clipper_polygons_with_subject_bbox(in.layers[n].lslices, lb),
+                                                  ClipperUtils::clip_clipper_polygons_with_subject_bbox(in.layers[n - 1].lslices, lb)));
                 deficit[n] = mm2(lost) >= p.A_min;
             }
         });

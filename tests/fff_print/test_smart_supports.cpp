@@ -151,14 +151,6 @@ int problems(const Result &r)
     return count;
 }
 
-int layer_at_print_z(const AnalysisInput &in, double z)
-{
-    for (size_t n = 0; n < in.layers.size(); ++ n)
-        if (std::abs(in.layers[n].print_z - z) < 0.001)
-            return int(n);
-    return -1;
-}
-
 std::set<uint32_t> placement_layers(const Result &r)
 {
     std::set<uint32_t> out;
@@ -189,7 +181,7 @@ std::pair<double, double> radial_range(const Placement &pl, const Point &c)
     return { lo, hi };
 }
 
-// Minimum x of a placement in the object frame relative to the PO frame origin shift, via the lslices of layer 0.
+// Minimum x of an area (PO frame), mm.
 double min_x(const ExPolygons &ex) { return get_extents(ex).min.x() * SCALING_FACTOR; }
 
 // Bridge between two pillars (case #5, #6): pillars pillar × width × height, slab of the given thickness on top.
@@ -1118,4 +1110,33 @@ TEST_CASE("run(): re-run on its own paint changes nothing; paint = false", "[Sma
         CHECK(r3.result.paint[i].data == r1.input.volumes[i].paint);
     }
     CHECK(r3.result.painted_areas[int(Cause::Cantilever)] == 0);
+}
+
+TEST_CASE("Verification adds nothing where the paint covers the plan", "[SmartSupports][sas-reference]")
+{
+    struct Shape { const char *key; std::function<Parts()> parts; bool reachable; UserParams up; };
+    UserParams b_ceil0 = ref_params();
+    b_ceil0.B_ceil = 0.;
+    const std::vector<Shape> shapes {
+        { "shelf_10x15", [] { return shelf_cube(10., 15.); }, false, ref_params() },
+        { "t_shape_15", [] { return t_shape(); }, false, ref_params() },
+        { "t_shape_on_80x80", [] { return t_shape(15., 10., 10., 20., 2., 80.); }, false, ref_params() },
+        { "slope_wall_40", [] { return slope_wall(40.); }, false, ref_params() },
+        { "stairs_0.4", [] { return stairs(2.5, 0.4); }, false, ref_params() },
+        { "inverted_cone_60", [] { return inverted_cone(60., 10., 5.); }, false, ref_params() },
+        { "sphere_20_elevated", sphere_elevated, true, ref_params() },
+        { "dome_20_25", [] { return dome(20., 25.); }, false, b_ceil0 },
+        { "hole_50", [] { return hole_block(50., 70., 20., 70.); }, false, ref_params() },
+        { "shelf_over_block", shelf_over_block, false, ref_params() },
+    };
+    RunOptions opts;
+    opts.verification = 1;
+    for (const Shape &shape : shapes) {
+        const SasPrint &sp = cached_print(shape.key, shape.parts, sas_config());
+        const SasRun    r  = run_ref((std::string("verification: ") + shape.key).c_str(), sp, shape.up, opts,
+                                     [&shape](Params &p) { p.test_assume_reachable = shape.reachable; });
+        INFO(shape.key);
+        CHECK(! r.result.placements.empty());
+        CHECK(rows_with(r.result, ReportState::RemainingAfterPaint) == 0);
+    }
 }
