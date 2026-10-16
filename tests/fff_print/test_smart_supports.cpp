@@ -843,6 +843,37 @@ TEST_CASE("Reference #22: verification finds a dropped placement", "[SmartSuppor
     CHECK(remaining == Approx(102.).epsilon(0.15));
 }
 
+// Review B M1: the placement's own notes (here PartlyOnModel: tips over the block) must not hide the needs that remain
+// when its paint is missing. Shelf 10 × 15 with a block 3 mm under its outer half, all placements dropped before paint.
+TEST_CASE("Verification reports missing paint under placements that carry a note", "[SmartSupports][sas-reference]")
+{
+    const SasPrint &sp = cached_print("shelf_10x15_over_block", [] {
+        Parts parts = shelf_cube(10., 15.);
+        parts.push_back(box({ 22., 2.5, 0. }, { 30., 17.5, 15. }));
+        return parts; }, sas_config());
+    RunOptions opts;
+    opts.verification = 1;
+    const SasRun planned = run_ref("shelf over a block, verification", sp, ref_params(), opts);
+    REQUIRE(! planned.result.placements.empty());
+    int notes = 0;
+    for (const ReportEntry &e : planned.result.report)
+        notes += e.state == ReportState::PartlyOnModel || e.state == ReportState::OnModelFallback || e.state == ReportState::MayMergeOntoModel;
+    CHECK(notes >= 1);                                           // the case the review describes
+    CHECK(rows_with(planned.result, ReportState::RemainingAfterPaint) == 0);
+    opts.test_mutate_before_paint = [](std::vector<Placement> &placements) { placements.clear(); };
+    const SasRun dropped = run_ref("shelf over a block, verification, nothing painted", sp, ref_params(), opts);
+    double remaining = 0.;
+    for (const ReportEntry &e : dropped.result.report)
+        if (e.state == ReportState::RemainingAfterPaint)
+            remaining += e.area_mm2;
+    double planned_area = 0.;
+    for (const Placement &pl : planned.result.placements)
+        planned_area += mm2(pl.area);
+    std::cout << "B-M1: planned " << planned_area << " mm², RemainingAfterPaint " << remaining << " mm²" << std::endl;
+    // The whole need zone (before: 31 of 102 mm² - the PartlyOnModel area masked the rest).
+    CHECK(remaining == Approx(102.).epsilon(0.15));
+}
+
 TEST_CASE("Reference #23: edge cases", "[SmartSupports][sas-reference]")
 {
     SECTION("empty input") {
