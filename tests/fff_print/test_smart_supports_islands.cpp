@@ -29,10 +29,8 @@ struct Base {
 Base base_of(const std::string &key, const std::function<Parts()> &make_parts)
 {
     const SasPrint &sp = cached_print(key, make_parts, sas_config());
-    UserParams up;
-    up.alpha_deg = 45;
     Base out;
-    out.in   = build_input(*sp.print_object(), *sp.print_object()->model_object(), 0, up);
+    out.in   = build_input(*sp.print_object(), *sp.print_object()->model_object(), 0, theory_user_params());
     out.base = build_base_model(out.in, [] {}, [](int) {});
     return out;
 }

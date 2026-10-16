@@ -445,11 +445,9 @@ void SmartSupportsPanel::load_settings()
     m_section_open = get_bool("section_open", false);
     m_up.paint_causes = uint8_t((get_bool("cause_islands", true) ? SS::cbIsland : 0) |
                                 (get_bool("cause_overhangs", true) ? SS::cbCantilever : 0));
-    // First value of α: the effective support_material_threshold (D5), derived and persisted when the section is
-    // opened. Users who never open it pay neither the config lookup nor an AppConfig write (review C m7).
-    m_alpha_pending = ! cfg.has(Section, "overhang_angle");
-    if (! m_alpha_pending)
-        m_up.alpha_deg = int(std::lround(get_double("overhang_angle", 0., 0., 89.)));
+    // α has a fixed default (45°), no longer the profile's support_material_threshold: Prusa's 35–40° are tuned for
+    // its own automatic supports. Stored values are kept as they are (no migration).
+    m_up.alpha_deg         = int(std::lround(get_double("overhang_angle", def.alpha_deg, 0., 89.)));
     m_up.K_max             = get_double("k_max",  def.K_max,  0.5, 20.);
     m_up.B_max             = get_double("b_max",  def.B_max,  5., 200.);
     m_up.B_ceil            = get_double("b_ceil", def.B_ceil, 0., 200.);
@@ -460,23 +458,9 @@ void SmartSupportsPanel::load_settings()
     m_up.lowest_level      = cfg.get(Section, "level") == "critical" ? SS::Level::Must : SS::Level::Should;
 }
 
-// First opening of the section: α starts from the effective support_material_threshold (D5), persisted from now on.
-void SmartSupportsPanel::ensure_alpha()
-{
-    if (! m_alpha_pending)
-        return;
-    update_effective_config(true);
-    if (! m_eff.valid)
-        return;                                    // no object yet: next time
-    m_up.alpha_deg  = std::clamp(m_eff.object.support_material_threshold.value, 0, 89);
-    m_alpha_pending = false;
-    save_settings();
-}
-
+// Called on user actions only, so users who never open the section get no AppConfig write (review C m7).
 void SmartSupportsPanel::save_settings() const
 {
-    if (m_alpha_pending)
-        return;   // nothing chosen yet; the section has never been opened
     AppConfig &cfg = *wxGetApp().app_config;
     cfg.set(Section, "section_open",      m_section_open ? "1" : "0");
     cfg.set(Section, "cause_islands",     (m_up.paint_causes & SS::cbIsland) ? "1" : "0");
@@ -495,9 +479,6 @@ void SmartSupportsPanel::save_settings() const
 void SmartSupportsPanel::reset_to_defaults()
 {
     m_up = SS::UserParams{};
-    update_effective_config(true);
-    m_up.alpha_deg  = m_eff.valid ? std::clamp(m_eff.object.support_material_threshold.value, 0, 89) : 0;
-    m_alpha_pending = false;
     save_settings();
 }
 
@@ -1169,7 +1150,6 @@ void SmartSupportsPanel::render_entry_line()
     if (ImGuiPureWrap::button(entry_label() + "##sas_entry")) {
         m_section_open      = true;
         m_scroll_to_section = true;
-        ensure_alpha();
         save_settings();
         poll(true);
         m_host.request_redraw();
@@ -1223,15 +1203,12 @@ void SmartSupportsPanel::render_section(float window_width)
     }
     if (open != m_section_open) {
         m_section_open = open;
-        if (open)
-            ensure_alpha();
         save_settings();
         if (open)
             poll(true);
     }
     if (! open || mo == nullptr)
         return;
-    ensure_alpha();
 
     const float labels_left = label_column_width();
     const float slider_w    = std::max(imgui.scaled(4.f), window_width - labels_left - ImGuiPureWrap::get_slider_icon_size().x);
@@ -1268,7 +1245,8 @@ void SmartSupportsPanel::render_section(float window_width)
     float alpha = float(m_up.alpha_deg);
     if (slider("##sas_alpha", alpha, 0.f, 89.f, m_up.alpha_deg == 0 ? _u8L("auto") : "%.0f" + degree_suffix(),
                _u8L("Slopes steeper than this angle (from horizontal) print without support. "
-                    "0 = automatic (half an extrusion width per layer)."))) {
+                    "0 = automatic (half an extrusion width per layer). "
+                    "Default 45°: 10° safer than the MK4S profiles' 35°."))) {
         m_up.alpha_deg = int(std::lround(std::clamp(alpha, 0.f, 89.f)));
         changed = true;
     }
@@ -1276,7 +1254,8 @@ void SmartSupportsPanel::render_section(float window_width)
     label(_u8L("Max overhang reach"));
     float k_max = float(m_up.K_max);
     if (slider("##sas_k_max", k_max, 0.5f, 20.f, "%.1f" + mm,
-               _u8L("Longest unsupported overhang that still prints. Larger values give less support."))) {
+               _u8L("Longest unsupported overhang that still prints. Larger values give less support. "
+                    "Default 2.5 mm: it adds up over the layers, so it stays below the usual 3 mm per layer."))) {
         m_up.K_max = std::clamp(double(k_max), 0.5, 20.);
         changed = true;
     }
@@ -1285,7 +1264,8 @@ void SmartSupportsPanel::render_section(float window_width)
     float b_max = float(m_up.B_max);
     if (slider("##sas_b_max", b_max, 5.f, 200.f, "%.0f" + mm,
                _u8L("Longest bridge that prints without support, along the slicer's bridge direction. "
-                    "Longer bridges are only reported in this version."))) {
+                    "Longer bridges are only reported in this version. "
+                    "Default 25 mm: the longest bridge tested on Prusa printers."))) {
         m_up.B_max = std::clamp(double(b_max), 5., 200.);
         changed = true;
     }
@@ -1344,7 +1324,8 @@ void SmartSupportsPanel::render_section(float window_width)
         label(_u8L("Max dome opening"));
         float b_ceil = float(m_up.B_ceil);
         if (slider("##sas_b_ceil", b_ceil, 0.f, 200.f, "%.0f" + mm,
-                   _u8L("Largest opening of a dome, funnel or counterbore ceiling that holds itself."))) {
+                   _u8L("Largest opening of a dome, funnel or counterbore ceiling that holds itself. "
+                        "Default 25 mm, as the bridge span."))) {
             m_up.B_ceil = std::clamp(double(b_ceil), 0., 200.);
             changed = true;
         }

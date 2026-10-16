@@ -121,6 +121,22 @@ TEST_CASE("derive_params mirrors the tree support settings", "[SmartSupports][sa
     }
 }
 
+TEST_CASE("UserParams defaults: Prusa MK4S 0.4 with a safety margin", "[SmartSupports][sas-input]")
+{
+    const UserParams up;
+    CHECK(up.alpha_deg == 45);   // fixed, not the profile's support_material_threshold
+    CHECK(up.K_max == 2.5);
+    CHECK(up.B_max == 25.);
+    CHECK(up.B_ceil == 25.);
+    CHECK(up.H_s == 1.);
+    CHECK(up.beta_equals_alpha);
+    CHECK(up.paint_causes == (cbIsland | cbCantilever));
+    CHECK(up.plate_policy == PlatePolicy::PreferPlate);
+    CHECK(up.lowest_level == Level::Should);
+    // No ReachBelowTipSpacing note at the 2.9.6 support defaults (tip spacing ≈ 3.07).
+    CHECK(up.K_max >= 0.5 * Params().tip_spacing);
+}
+
 TEST_CASE("test_params() matches derive_params() of the default test config", "[SmartSupports][sas-input]")
 {
     const SasPrint &sp = cached_print("shelf_10x15", [] { return shelf_cube(10., 15.); }, sas_config());

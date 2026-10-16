@@ -292,9 +292,7 @@ TEST_CASE("Organic support from smart paint", "[SmartSupports][sas-slicer][slow]
 TEST_CASE("project_states with paint vertices on slicing planes", "[SmartSupports][sas-slicer]")
 {
     const SasPrint &sp = cached_print("inverted_cone_60", [] { return inverted_cone(60., 10., 5.); }, sas_config());
-    UserParams up;
-    up.alpha_deg = 45;
-    const SasRun r = run_sas(sp.print, up);
+    const SasRun r = run_sas(sp.print, theory_user_params());
     REQUIRE(r.result.paint.size() == r.input.volumes.size());
     std::set<float> planes;
     for (const LayerInput &layer : r.input.layers)

@@ -56,12 +56,14 @@ enum class PlatePolicy : uint8_t { PreferPlate, PlateOnly };
 inline constexpr uint8_t cause_bit(Cause c) { return uint8_t(1u << int(c)); }
 
 // User parameters: panel fields, persisted in AppConfig (plan §6.8). Lengths in mm, angles in degrees.
+// Defaults: Prusa MK4S, 0.4 nozzle, with a safety margin (guide §4 "Why these defaults"); the theory placeholders of
+// theory §9 (α 45, K_max 3, B_max 40, B_ceil 40, H_s 1) are what the reference tests pin.
 struct UserParams {
     uint8_t     paint_causes = cbIsland | cbCantilever; // CauseBit set of causes to paint; cbLongSpan is ignored in v1
-    int         alpha_deg    = 0;                       // overhang angle α from horizontal; 0 = auto: w_n = 0.5·ext_width_avg(n−1)
-    double      K_max  = 3.0;                           // max accumulated overhang reach
-    double      B_max  = 40.0;                          // max bridge span
-    double      B_ceil = 40.0;                          // max Feret diameter of a hoop hole (dome opening)
+    int         alpha_deg    = 45;                      // overhang angle α from horizontal; 0 = auto: w_n = 0.5·ext_width_avg(n−1)
+    double      K_max  = 2.5;                           // max accumulated overhang reach
+    double      B_max  = 25.0;                          // max bridge span
+    double      B_ceil = 25.0;                          // max Feret diameter of a hoop hole (dome opening)
     double      H_s    = 1.0;                           // reach fade (stiffening) height; 0 = per layer
     bool        beta_equals_alpha = true;               // accumulation angle β = α
     double      beta_deg = 45.0;                        // β if !beta_equals_alpha, clamped to (0, α_eff] (§3.4)

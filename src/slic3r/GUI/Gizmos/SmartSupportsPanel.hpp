@@ -143,7 +143,6 @@ private:
 
     // settings
     void load_settings();
-    void ensure_alpha();
     void save_settings() const;
     void reset_to_defaults();
     bool fake_mode() const;
@@ -195,7 +194,6 @@ private:
     // settings (AppConfig section "smart_auto_supports", plan §6.8)
     bool                                        m_loaded        = false;
     bool                                        m_section_open  = false;
-    bool                                        m_alpha_pending = false;  // α not stored yet: derived when the section opens
     SmartSupports::UserParams                   m_up;
 
     // UI
