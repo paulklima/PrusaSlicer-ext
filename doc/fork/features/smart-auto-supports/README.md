@@ -104,6 +104,7 @@ add nothing on this topic (`notes/theory.md` §12).
 
 ## Notes
 
+- `guide.md` — end-user guide: panel, colours, report, own paint, saving, limits (v1).
 - `notes/concept.md` — general concept, open questions (discussion document).
 - `notes/theory.md` — theory: failure model, shared base model, detector classes (islands,
   tension regions, cantilevers, stability), plate reachability and the slicer's contact,
