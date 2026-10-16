@@ -1047,7 +1047,7 @@ Long-span painting and stability are follow-ups. v1 implements exactly this capa
 
 | Parameter | Meaning | Starting point |
 |---|---|---|
-| α | overhang threshold; 0 = half an external perimeter width per layer | `support_material_threshold`; v1: a panel field, first value from the config (plan D5) |
+| α | overhang threshold; 0 = half an external perimeter width per layer | `support_material_threshold`; v1: a panel field with a fixed default (below; was: first value from the config, plan D5) |
 | β | accumulation angle (≤ α) | = α |
 | `K_max` | longest accumulated excess reach | 3 mm (OrcaSlicer, per layer); more with extra perimeters on overhangs; scales with extrusion width |
 | `H_s` | stiffening height; 0 = per layer (OrcaSlicer-like) | 1 mm |
@@ -1067,6 +1067,20 @@ Long-span painting and stability are follow-ups. v1 implements exactly this capa
 | margin | tolerance at the edge of `R_n`: flags only (§5.1) | about one branch radius; v1: not used |
 | plate policy | plate-preferred / strict | plate-preferred |
 | lowest painted level | may / should / must; needs below are reported, not planned (§6) | v1: must, or must + should (default) |
+
+**v1 defaults (MK4S 0.4, with safety margin).** The panel defaults (`UserParams`) are set for a Prusa MK4S with a 0.4 mm
+nozzle and a safety margin. The starting points above stay the theory values; the reference cases (§10) and the tests
+use them (`theory_user_params()`: α 45°, `K_max` 3, `B_max` 40, `B_ceil` 40, `H_s` 1).
+
+| Parameter | Starting point (theory) | v1 default | Reason |
+|---|---|---|---|
+| α | `support_material_threshold` (MK4S profiles: SPEED 35°, STRUCTURAL / DETAIL 40°) | 45°, fixed (not read from the profile; 0 = auto stays selectable) | Prusa's 35–40° are for its own automatic supports; 10° margin over SPEED |
+| `K_max` | 3 mm | 2.5 mm | OrcaSlicer's 3 mm is per layer, `c` accumulates; 0.5 mm margin |
+| `B_max` | 40 mm | 25 mm | measured bridges on Prusa printers: 25 mm (test maximum), 28 mm fine on an MK3S; no measured MK4S maximum |
+| `B_ceil` | 40 mm | 25 mm | = `B_max`; no data that ring ceilings hold further |
+
+`H_s`, β, the lowest level and the plate policy keep their starting points. All of them remain placeholders until test
+prints.
 
 ## 10. Reference cases
 
