@@ -211,6 +211,7 @@ Verification of the fix round:
 | lane 2 `PrusaSlicer` | built and linked, no warnings in feature files |
 | full `libslic3r_tests` | 292 test cases: 291 passed, 1 failed as expected (arc welder `[!shouldfail]`) |
 | full `fff_print_tests` | 205 test cases / 219 580 assertions passed |
+| bare plain 2.9.6, asserts on (`bare-build.sh 61a8059ab3`) | `libslic3r_tests "[SmartSupports]"` 62 / 28 671 passed; `fff_print_tests "[SmartSupports]"` without the upstream-asserting cross-check 77 / 7 672 passed; no warnings in feature files |
 
 ## Remaining known limitations and risks
 
