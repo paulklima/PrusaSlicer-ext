@@ -1,8 +1,9 @@
 // Smart support painting: reference cases of plan §7.2 (theory §10) through run() (WP2c1b).
 //
 // Every case runs the whole pipeline (Phase A, plan, paint, report; verification where stated) on a sliced print with
-// the §7 default config (interface layers 0) and α = 45° (theory §10 assumes w = 0.2 mm at h 0.2; UserParams defaults to
-// auto α). Each case prints a one-line summary (placements, areas, report rows, time) for the work package log.
+// the §7 default config (interface layers 0) and the theory user parameters (theory_user_params(): α 45°, K_max 3,
+// B_max 40, B_ceil 40, H_s 1; not the MK4S product defaults of UserParams). Each case prints a one-line summary
+// (placements, areas, report rows, time) for the work package log.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
@@ -35,12 +36,8 @@ namespace {
 
 double mm2(const ExPolygons &ex) { return area(ex) * SCALING_FACTOR * SCALING_FACTOR; }
 
-UserParams ref_params()
-{
-    UserParams up;
-    up.alpha_deg = 45;
-    return up;
-}
+// Pinned to the theory values (§9, §10), independent of the product defaults.
+UserParams ref_params() { return theory_user_params(); }
 
 const char* cause_name(Cause c) { return c == Cause::Island ? "island" : c == Cause::Cantilever ? "cantilever" : "long span"; }
 const char* level_name(Level l) { return l == Level::May ? "may" : l == Level::Should ? "should" : "must"; }

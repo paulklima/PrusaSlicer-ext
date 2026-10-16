@@ -281,12 +281,25 @@ inline Parts toe(double hover)
 // ---------------------------------------------------------------------------------------------------------------
 // Analysis inputs
 
+// User parameters of the theory (§9 placeholders, §10 reference cases: α = β = 45°, i.e. w = 0.2 mm at h 0.2), set
+// explicitly: the tests stay pinned to them whatever the product defaults of UserParams are (MK4S, guide §4).
+inline UserParams theory_user_params()
+{
+    UserParams up;
+    up.alpha_deg = 45;
+    up.K_max     = 3.;
+    up.B_max     = 40.;
+    up.B_ceil    = 40.;
+    up.H_s       = 1.;
+    return up;
+}
+
 // Params of the §7 default config (layer 0.2, first 0.2, nozzle 0.4, organic, threshold 45, contact 0.2,
-// raft 0) with interface layers 0 and verification off.
+// raft 0) with the theory user parameters, interface layers 0 and verification off.
 inline Params test_params()
 {
     Params params;
-    params.user.alpha_deg  = 45;
+    params.user            = theory_user_params();
     params.interface_layers = 0;
     params.verification    = false;
     return params;

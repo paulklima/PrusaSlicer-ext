@@ -82,14 +82,9 @@ std::vector<ExPolygons> manual_zones(const BaseModel &base)
     return E;
 }
 
-// The reference cases assume α = β = 45° (theory §10: w = 0.2 mm at h 0.2); UserParams defaults to auto α
-// (w = 0.5·ext_width = 0.225 mm).
-UserParams ref_params()
-{
-    UserParams up;
-    up.alpha_deg = 45;
-    return up;
-}
+// The reference cases assume the theory values: α = β = 45° (theory §10: w = 0.2 mm at h 0.2), K_max 3, B_max 40,
+// B_ceil 40, H_s 1 (§9), independent of the MK4S product defaults of UserParams.
+UserParams ref_params() { return theory_user_params(); }
 
 AnalysisInput input_of(const SasPrint &sp, const UserParams &up = ref_params())
 {
