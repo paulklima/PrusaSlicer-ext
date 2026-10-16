@@ -144,11 +144,12 @@ struct Planner
     std::vector<Placement> stage_model(Cause cause);
     ExPolygons rows(const ExPolygons &needs, bool plate_positions);
     void accept(std::vector<Placement> &&accepted);
-    void residual(Cause cause, const ExPolygons &tried, const std::array<ExPolygons, 5> &why, bool roof_rejected, bool exhausted);
+    void residual(Cause cause, const ExPolygons &tried, bool roof_rejected, bool exhausted);
     bool contact_lost(const ExPolygons &E_trial) const;
 
     // ---- helpers
-    ExPolygons plate_of(const ExPolygons &Z) const;
+    ExPolygons plate_of(const ExPolygons &Z, const ExPolygons &needs);
+    void       note_roof_gap(const Reachability::Contact &c, const ExPolygons &needs);
     ExPolygons minus_blk(const ExPolygons &Z) const { return blk.empty() || Z.empty() ? Z : diff_ex(Z, blk); }
     ExPolygons blocker_zone(uint32_t layer) const;
     Level      level_near(Cause cause, const ExPolygons &piece, coord_t radius) const;
@@ -191,6 +192,7 @@ struct Planner
     ExPolygons                                blk;        // blocker zone (projections ⊕ clearance)
     std::vector<size_t>                       layer_placements;
     std::vector<std::pair<ExPolygons, std::pair<ReportState, Why>>> island_residual;   // island pieces reported at n
+    std::array<ExPolygons, 5>                 why;        // known reasons of the current cause (by Why): evaluations, stages
 };
 
 Planner::Planner(const AnalysisInput &in, const BaseModel &base, Reachability &reach, const ThrowOnCancel &cancel_in) :
@@ -235,15 +237,30 @@ ExPolygons Planner::blocker_zone(uint32_t layer) const
     return clearance > 0 ? offset_ex(union_ex(src), float(clearance)) : union_ex(src);
 }
 
-// plate_part(Z, E) (theory §5.2); with Params::test_assume_reachable every contact counts (tests, #11).
-ExPolygons Planner::plate_of(const ExPolygons &Z) const
+// plate_part(Z, E) = Z ∩ cover(contact(E ∪ Z).plate) (theory §5.2), with the contact computed once here so that the
+// roof gap of the candidate can be attributed to the needs (D30); with Params::test_assume_reachable every contact
+// counts (tests, #11).
+ExPolygons Planner::plate_of(const ExPolygons &Z, const ExPolygons &needs)
 {
     if (Z.empty())
         return {};
-    if (! p.test_assume_reachable)
-        return reach.plate_part(Z, E, n);
     const Reachability::Contact c = reach.contact(E.empty() ? Z : union_ex(E, Z), n);
-    return c.all.empty() ? ExPolygons() : intersection_ex(Z, reach.cover(c.all, n));
+    this->note_roof_gap(c, needs);
+    const ExPolygons &support = p.test_assume_reachable ? c.all : c.plate;
+    return support.empty() ? ExPolygons() : intersection_ex(Z, reach.cover(support, n));
+}
+
+// Needs that the tip path would cover but the roof path of this contact does not: InterfaceGap (D30, review 7 m8). The
+// evaluator attributes this for its own E only; a candidate that nothing else accepts must carry it too.
+void Planner::note_roof_gap(const Reachability::Contact &c, const ExPolygons &needs)
+{
+    if (! c.roof_gap || c.tip_path_all.empty() || needs.empty())
+        return;
+    ExPolygons gap = intersection_ex(needs, reach.cover(c.tip_path_all, n));
+    if (! gap.empty() && ! c.all.empty())
+        gap = diff_ex(gap, reach.cover(c.all, n));
+    if (! gap.empty())
+        why[size_t(Why::InterfaceGap)] = united(why[size_t(Why::InterfaceGap)], gap);
 }
 
 // Contact change of a trial: with interface layers 0 the contact is local to the added zone (superadditive, P4); with
@@ -391,7 +408,7 @@ ExPolygons Planner::rows(const ExPolygons &needs, bool plate_positions)
     if (plate_positions) {
         const BoundingBox wb = cuts_bb.inflated(scaled<double>(RowLengthMm));
         const ExPolygons  cp = this->minus_blk(intersection_ex(L.cprime, Polygons{ wb.polygon() }));
-        if (const ExPolygons pp = this->plate_of(cp); ! pp.empty()) {
+        if (const ExPolygons pp = this->plate_of(cp, {}); ! pp.empty()) {
             gp = make_grid(wb, grid_res(wb, p));
             rasterize(pp, gp, 1, false);
         }
@@ -422,7 +439,7 @@ std::vector<Placement> Planner::stage_plate(Cause cause, const ExPolygons &needs
     const ExPolygons Z = this->minus_blk(cause == Cause::LongSpan ? this->rows(needs, true) : needs);
     if (Z.empty())
         return {};
-    plate = this->plate_of(Z);
+    plate = this->plate_of(Z, needs);
     if (plate.empty())
         return {};
     if (cause == Cause::LongSpan)
@@ -474,7 +491,7 @@ std::vector<Placement> Planner::stage_widen(Cause cause, const ExPolygons &needs
         return {};
     const coord_t    K  = scaled<coord_t>(std::max(0., up.K_max));
     const ExPolygons Zw = this->minus_blk(intersection_ex(L.cprime, offset(Nw, float(K))));
-    return this->as_placements(cause, this->plate_of(Zw), K);
+    return this->as_placements(cause, this->plate_of(Zw, Nw), K);
 }
 
 // Stage 3 (prefer plate only, theory §5.3): the must points on the model, kept where the contact (plate or model)
@@ -490,6 +507,7 @@ std::vector<Placement> Planner::stage_model(Cause cause)
     if (M.empty())
         return {};
     const Reachability::Contact c = reach.contact(E.empty() ? M : union_ex(E, M), n);
+    this->note_roof_gap(c, must);
     if (c.all.empty())
         return {};
     const ExPolygons covered = intersection_ex(M, reach.cover(c.all, n));
@@ -544,7 +562,7 @@ void Planner::accept(std::vector<Placement> &&accepted)
 // InterfaceGap: from the current and the trial evaluations) → Unplaceable with it; components no stage found a
 // position near → NotReachable; else the progress rule failed → NoProgress (InterfaceGap if a trial was rejected for a
 // roof merge that lost contact).
-void Planner::residual(Cause cause, const ExPolygons &tried, const std::array<ExPolygons, 5> &why, bool roof_rejected, bool exhausted)
+void Planner::residual(Cause cause, const ExPolygons &tried, bool roof_rejected, bool exhausted)
 {
     const coord_t     K    = scaled<coord_t>(std::max(0., up.K_max)) + scaled<coord_t>(0.01);
     const Polygons    near = tried.empty() ? Polygons() : offset(tried, float(K));
@@ -582,9 +600,9 @@ void Planner::residual(Cause cause, const ExPolygons &tried, const std::array<Ex
 // The placement loop of one cause at the current layer (plan §3.9).
 void Planner::place_cause(Cause cause)
 {
-    ExPolygons                tried;
-    std::array<ExPolygons, 5> why;
-    auto add_why = [&why](const LayerNeeds &ln) {
+    ExPolygons tried;
+    why = {};
+    auto add_why = [this](const LayerNeeds &ln) {
         for (const auto &[pieces, w] : ln.why)
             if (! pieces.empty())
                 why[size_t(w)] = united(why[size_t(w)], pieces);
@@ -598,7 +616,7 @@ void Planner::place_cause(Cause cause)
         if (before < a_min)
             break;
         if (it >= p.max_place_iterations) {
-            this->residual(cause, tried, why, roof_rejected, true);
+            this->residual(cause, tried, roof_rejected, true);
             break;
         }
         bool       progressed = false;
@@ -641,7 +659,7 @@ void Planner::place_cause(Cause cause)
             }
         }
         if (! progressed) {
-            this->residual(cause, tried, why, roof_rejected, false);
+            this->residual(cause, tried, roof_rejected, false);
             break;
         }
     }
