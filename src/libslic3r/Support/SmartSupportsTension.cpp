@@ -134,7 +134,7 @@ struct ScanSegment {
 };
 
 void wide_tension(const ExPolygons &cprime, const Polygons &cp, const FrontGeom &front, const ExPolygons &D_component,
-                  const DomainEdges &edges, const Params &params, TensionMap &out)
+                  const DomainEdges &edges, const Params &params, const ThrowOnCancel &cancel, TensionMap &out)
 {
     // bad[ℓ]: points worse than ℓ under some θ (incl. points that no strip of some θ reaches).
     std::array<Polygons, 4> bad;
@@ -167,6 +167,8 @@ void wide_tension(const ExPolygons &cprime, const Polygons &cp, const FrontGeom 
     for (const Vec2d &theta : front.thetas) {
         if (theta.squaredNorm() <= 0.)
             continue;
+        if (cancel)
+            cancel();
         const Vec2d u = theta.normalized();
         const Vec2d n(- u.y(), u.x());
         double n_lo, n_hi, l_lo, l_hi;
@@ -209,6 +211,8 @@ void wide_tension(const ExPolygons &cprime, const Polygons &cp, const FrontGeom 
         // (at most strip_reach spacings), so that C' next to slanted boundaries takes the level of its own segment.
         std::array<Polygons, 5> strips;
         for (size_t i = 0; i < segments.size(); ++ i) {
+            if (cancel && (i & 255) == 255)
+                cancel();
             const ScanSegment &s     = segments[i];
             const bool         first = i == 0 || segments[i - 1].line != s.line;
             const bool         last  = i + 1 == segments.size() || segments[i + 1].line != s.line;
@@ -223,9 +227,11 @@ void wide_tension(const ExPolygons &cprime, const Polygons &cp, const FrontGeom 
                            to_point(o + u * hi + n * half_step), to_point(o + u * lo + n * half_step) });
             const double t     = unscale<double>((s.b - s.a).cast<double>().norm());
             const TLevel level = is_anchor(s.a) && is_anchor(s.b) ? span_level(t, params) : TLevel::None;
-            if ((level == TLevel::May || level == TLevel::Should || level == TLevel::Must) &&
-                ! intersection(Polygons{ rect }, cp).empty())
-                add_cuts(s.a, u, t, params, out.cuts);
+            // Cuts only for strips that meet C': bbox prefilter, then C' clipped to the strip (review B m3).
+            if (level == TLevel::May || level == TLevel::Should || level == TLevel::Must)
+                if (const BoundingBox rb = get_extents(rect); rb.overlap(bbox_c) &&
+                    ! intersection(Polygons{ rect }, ClipperUtils::clip_clipper_polygons_with_subject_bbox(cp, rb.inflated(SCALED_EPSILON))).empty())
+                    add_cuts(s.a, u, t, params, out.cuts);
             strips[level_index(level)].emplace_back(std::move(rect));
         }
 
@@ -463,14 +469,14 @@ DomainEdges domain_edges(const ExPolygons &D_component, const ExPolygons &stop)
 }
 
 TensionMap tension_levels(const ExPolygons &cprime, const FrontGeom &front, const ExPolygons &D_component,
-                          const DomainEdges &edges, const Anchors &anchors, const Params &params)
+                          const DomainEdges &edges, const Anchors &anchors, const Params &params, const ThrowOnCancel &cancel)
 {
     TensionMap out;
     if (cprime.empty())
         return out;
     const Polygons cp = to_polygons(cprime);
     if (front.wide)
-        wide_tension(cprime, cp, front, D_component, edges, params, out);
+        wide_tension(cprime, cp, front, D_component, edges, params, cancel, out);
     else
         thin_tension(cp, anchors, params, out);
     return out;
@@ -492,7 +498,7 @@ ExPolygons hoop_credit(const ExPolygons &cprime, const FrontGeom &front, bool gr
 }
 
 FrontNeeds classify_front(const ExPolygons &cprime, const ReachQuery &reach, const TensionMap &tension,
-                          const ExPolygons &hoop_band, float max_chat, const Params &params)
+                          const ExPolygons &hoop_band, float max_chat, const Params &params, const ThrowOnCancel &cancel)
 {
     FrontNeeds out;
     Polygons   zero = to_polygons(tension.covered_all);
@@ -549,7 +555,12 @@ FrontNeeds classify_front(const ExPolygons &cprime, const ReachQuery &reach, con
         const int row0 = int(std::ceil(double(bbox.min.y()) / double(res) - 0.5));
         const int row1 = int(std::floor(double(bbox.max.y()) / double(res) - 0.5));
         auto centre = [res](int i) { return coord_t(std::round((double(i) + 0.5) * double(res))); };
+        int last_row = row0 - 1;
         scan_rows(cp, res, row0, row1, [&](int row, double x_lo, double x_hi) {
+            // Up to grid_max_pixels samples per front: cancel every 64 rows (review B m2).
+            if (cancel && row != last_row && (row & 63) == 0)
+                cancel();
+            last_row = row;
             const int     i0 = int(std::ceil(x_lo / double(res) - 0.5));
             const int     i1 = int(std::floor(x_hi / double(res) - 0.5));
             const coord_t y  = centre(row);
@@ -571,8 +582,11 @@ FrontNeeds classify_front(const ExPolygons &cprime, const ReachQuery &reach, con
             }
         });
     }
-    for (const Point &p : boundary_samples) {
-        const float c = reach.value(p);
+    for (size_t k = 0; k < boundary_samples.size(); ++ k) {
+        if (cancel && (k & 0xffff) == 0xffff)
+            cancel();
+        const Point &p = boundary_samples[k];
+        const float  c = reach.value(p);
         sample(c);
         if (const int level = bend_level(c); level > 0)
             squares[level].emplace_back(run_rect(p.x(), p.x(), p.y(), half));

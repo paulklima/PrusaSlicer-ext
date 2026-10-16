@@ -334,9 +334,12 @@ void ReachField::Impl::build_grid(const ExPolygons &cprime, const ExPolygons &do
         bbox.merge(seg.l.a);
         bbox.merge(seg.l.b);
     }
-    const Vec2d  size   = unscale(bbox.size());
-    const double res_mm = std::clamp(std::sqrt(size.x() * size.y() / double(std::max<size_t>(params.grid_max_pixels, 1))),
-                                     params.grid_res_min, params.grid_res_max);
+    // res = clamp(√(area / grid_max_pixels), grid_res_min, grid_res_max) (plan §3.8), except that grid_max_pixels wins
+    // over grid_res_max: a D component larger than ≈ 200 × 200 mm gets a coarser grid instead of more than 4 M cells
+    // (≈ 52 MB with the heap, per cluster in parallel, and held by the cluster cache and the carry; review B m4).
+    const Vec2d  size    = unscale(bbox.size());
+    const double res_cap = std::sqrt(size.x() * size.y() / double(std::max<size_t>(params.grid_max_pixels, 1)));
+    const double res_mm  = std::max(std::clamp(res_cap, params.grid_res_min, params.grid_res_max), res_cap);
     direct = false;
     res    = std::max<coord_t>(scaled<coord_t>(res_mm), 1);
     // Δ ≤ ρ keeps the cells on the rim of the exact zone in the linear part of max(0, dist − Δ), so the Dijkstra

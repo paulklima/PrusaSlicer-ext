@@ -210,8 +210,9 @@ struct TensionMap {
     struct Cut { Point p; Vec2d dir; double t; double lo, hi; };   // cut interval [lo, hi] along the span
     std::vector<Cut> cuts;                                // long-span row candidates
 };
+// cancel (may be empty) is called per θ and every 256 scanline segments.
 TensionMap tension_levels(const ExPolygons &cprime, const FrontGeom &, const ExPolygons &D_component,
-                          const DomainEdges &, const Anchors &, const Params &);
+                          const DomainEdges &, const Anchors &, const Params &, const ThrowOnCancel &cancel = {});
 // C' ∩ (H ⊕ B_max·hoop_width_factor) if the front is a grounded hoop candidate with hoop_feret ≤ B_ceil, else ∅
 ExPolygons hoop_credit(const ExPolygons &cprime, const FrontGeom &, bool grounded, const Params &);
 struct FrontNeeds {
@@ -219,8 +220,9 @@ struct FrontNeeds {
     ExPolygons zero;                                      // covered_all ∪ hoop band (c* = 0 for the carry)
     float max_c = 0;
 };
+// cancel (may be empty) is called every 64 sample rows and every 64k boundary samples.
 FrontNeeds classify_front(const ExPolygons &cprime, const ReachQuery &, const TensionMap &,
-                          const ExPolygons &hoop_band, float max_chat, const Params &);
+                          const ExPolygons &hoop_band, float max_chat, const Params &, const ThrowOnCancel &cancel = {});
 
 // ===== Evaluator (WP2c1a), plan §3.8. Stub: evaluate returns empty needs; commit no-op; evaluate_pass empty.
 struct LayerNeeds {
