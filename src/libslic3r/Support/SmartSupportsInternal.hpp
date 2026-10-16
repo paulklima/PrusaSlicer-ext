@@ -21,6 +21,7 @@
 
 #include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/Line.hpp"
 #include "libslic3r/Polygon.hpp"
@@ -28,6 +29,19 @@
 #include "libslic3r/Support/SmartSupports.hpp"
 
 namespace Slic3r::SmartSupports {
+
+// ===== Shared geometry helper (WP5; defined in SmartSupportsBase.cpp)
+// Outward offset by delta > 0 that keeps thin input. ClipperUtils' offset() drops the vertices of a path that lie
+// closer than ClipperOffsetShortestEdgeFactor·|delta| (0.5 %) to the previous one before offsetting, so a strip
+// thinner than that degenerates and its offset is empty (a 13 µm slope front grown by the 2.8 mm cluster margin).
+// Here the offset runs in two steps, 1 % of delta first: a strip survives down to 0.005 % of delta (0.14 µm at
+// 2.8 mm). Joins as offset(); limit = miter limit or arc tolerance (the first step uses 2 % of its own distance). A
+// round result lies in src ⊕ delta and contains src ⊕ (delta − 2.25·limit − 0.0008·delta): Clipper rounds the number
+// of arc steps per vertex (up to 1.5 × the nominal step angle, 2.25 × its sagitta), and step 2 drops vertices of
+// step 1's arcs. delta ≤ 0: plain offset(). Not for the mirrors of slicer offsets (Reachability): they must lose what
+// the slicer loses.
+Polygons offset_keep_thin(const ExPolygons &src, float delta, ClipperLib::JoinType join = DefaultJoinType,
+                          double limit = DefaultMiterLimit);
 
 // ===== Projection (WP1a). Result size = in.layers.size(); stub: all empty.
 // Projects the facets of each volume whose state passes filter onto the layers, like

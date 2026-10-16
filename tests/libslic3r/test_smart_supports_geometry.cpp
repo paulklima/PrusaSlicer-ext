@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <string>
+#include <tuple>
 
 #include <oneapi/tbb/global_control.h>
 
@@ -365,6 +366,64 @@ TEST_CASE("Hoop candidates", "[SmartSupports][sas-geometry]")
         REQUIRE(lg.fronts.size() == 1);
         CHECK(lg.fronts.front().C.holes.size() == 2);
         CHECK(lg.fronts.front().hoop_hole == -1);
+    }
+}
+
+// WP5 regression (WP2c1a finding): ClipperUtils' offset() drops vertices closer than 0.5 % of the offset distance, so
+// a front thinner than ≈ 0.005·m (m = 2.5 mm + w) vanished from offset(∪C, m) and its band was empty.
+TEST_CASE("Bands contain thin fronts (two-step offset)", "[SmartSupports][sas-geometry]")
+{
+    const double arc = scaled<double>(0.005);
+    SECTION("offset_keep_thin keeps a 10 µm strip that a plain offset loses") {
+        const ExPolygons strip { rectangle_mm(0., 0., 20., 0.01) };
+        const float      d = scaled<float>(2.8);
+        CHECK(offset(strip, d, ClipperLib::jtRound, arc).empty());       // the Clipper behaviour behind the bug
+        // Documented bounds (SmartSupportsInternal.hpp): src ⊕ (d − 2.25·arc − 0.0008·d) ⊂ result ⊂ src ⊕ d; the
+        // references use a 0.1 µm arc tolerance (and the strip's axis, since the strip itself degenerates).
+        const double   fine  = scaled<double>(0.0001);
+        const float    inner = d - float(2.25 * arc + 0.0008 * d + scaled<double>(0.0005));
+        const Polygons grown = offset_keep_thin(strip, d, ClipperLib::jtRound, arc);
+        const double   exact = 20. * 0.01 + 2. * 20.01 * 2.8 + M_PI * 2.8 * 2.8;
+        CHECK(area(grown) * SCALING_FACTOR * SCALING_FACTOR == Approx(exact).epsilon(0.002));
+        const Polyline axis { Point(0, scaled<coord_t>(0.005)), Point(scaled<coord_t>(20.), scaled<coord_t>(0.005)) };
+        CHECK(area_mm2(diff_ex(offset(axis, inner, ClipperLib::jtRound, fine, ClipperLib::etOpenRound), grown)) < 1e-9);
+        CHECK(area_mm2(diff_ex(grown, offset(axis, d + scaled<float>(0.0052), ClipperLib::jtRound, fine, ClipperLib::etOpenRound))) < 1e-9);
+        // Wide input: within the same bounds of the exact offset.
+        const ExPolygons square { rectangle_mm(0., 0., 5., 5.) };
+        const Polygons   sq     = offset_keep_thin(square, d, ClipperLib::jtRound, arc);
+        CHECK(area_mm2(diff_ex(offset(square, inner, ClipperLib::jtRound, fine), sq)) < 1e-9);
+        CHECK(area_mm2(diff_ex(sq, offset(square, d + scaled<float>(0.0001), ClipperLib::jtRound, fine))) < 1e-9);
+        CHECK(offset_keep_thin(ExPolygons(), d).empty());
+        CHECK(area_mm2(union_ex(offset_keep_thin(square, 0.f))) == Approx(25.));
+    }
+    // 44° wall at α 45 (fronts 0.2/tan 44° − 0.2 ≈ 7 µm) and 40° wall at auto α (w = 0.225, fronts ≈ 13 µm).
+    for (const auto &[angle, alpha, width_um] : { std::tuple<double, int, double>{ 44., 45, 7.1 }, { 40., 0, 13.4 } }) {
+        DYNAMIC_SECTION("wall " << angle << "°, α " << alpha << ": every band holds its fronts") {
+            Params params          = test_params();
+            params.user.alpha_deg  = alpha;
+            const AnalysisInput in   = synthetic_input(slope_wall(angle, 6., 5., 20.), 0.2, 0.2, params);
+            const BaseModel     base = base_of(in);
+            size_t clusters = 0, plain_empty = 0;
+            for (size_t n = 1; n < base.layers.size(); ++ n) {
+                const LayerGeom &lg = base.layers[n];
+                const coord_t    m  = scaled<coord_t>(params.cluster_margin + params.rho_exact) + lg.w;
+                for (const Cluster &cl : lg.clusters) {
+                    ++ clusters;
+                    ExPolygons Cs;
+                    for (uint32_t idx : cl.fronts) {
+                        Cs.push_back(lg.fronts[idx].C);
+                        // Front width = area / length (20 mm).
+                        CHECK(lg.fronts[idx].area_mm2 / 20. * 1000. == Approx(width_um).margin(1.));
+                    }
+                    CHECK(area_mm2(diff_ex(Cs, cl.band)) < 1e-6);
+                    CHECK(! cl.band_prev.empty());
+                    CHECK(area_mm2(cl.band) > 20. * 2.5);                     // ≈ 20 × m on the material side
+                    plain_empty += offset(Cs, float(m), ClipperLib::jtRound, arc).empty();
+                }
+            }
+            CHECK(clusters > 20);
+            CHECK(plain_empty == clusters);                               // the case is really the degenerate one
+        }
     }
 }
 

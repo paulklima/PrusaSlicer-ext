@@ -244,7 +244,6 @@ struct LayerEvaluator::Impl
     std::shared_ptr<const Reachability::Contact> contact_of(const ExPolygons &E, uint32_t n);
     std::shared_ptr<const ClusterOut> eval_cluster(uint32_t n, size_t ci, ExPolygons &&Fc, Memo &memo) const;
     void       assemble(uint32_t n, const std::vector<std::pair<ExPolygons, Cause>> &overrides);
-    void       check_bands(uint32_t n);
     ExPolygons cover_near(const ExPolygons &F, const BoundingBox &bbox, uint32_t n) const;
     int32_t    ungrounded_tag(const ExPolygon &C) const;
 
@@ -267,7 +266,6 @@ struct LayerEvaluator::Impl
     ExPolygons               ugs;               // ungrounded part of S_n
     Tagged                   ugs_tagged;
     std::vector<ClusterSlot> slots;
-    std::vector<ExPolygons>  band_fix;          // per cluster: recomputed band where Phase A's band misses fronts
     std::deque<std::pair<ExPolygons, std::shared_ptr<const Reachability::Contact>>> contacts;   // ≤ 2, most recent first
     std::shared_ptr<const Reachability::Contact> contact;   // of the last evaluate()
     bool                     evaluated = false;
@@ -313,31 +311,6 @@ int32_t LayerEvaluator::Impl::ungrounded_tag(const ExPolygon &C) const
     return -1;
 }
 
-// The band of a cluster must contain its fronts. ClipperOffset drops edges shorter than 0.5 % of the offset distance
-// (ClipperOffsetShortestEdgeFactor), so Phase A's L ∩ (∪C ⊕ m) is empty for fronts thinner than ≈ 0.005·m ≈ 14 µm
-// (slopes within ≈ 2° of α). Such bands are recomputed here with the offset split in two steps (0.01·m first).
-void LayerEvaluator::Impl::check_bands(uint32_t n)
-{
-    const LayerGeom &lg = base.layers[n];
-    band_fix.assign(lg.clusters.size(), ExPolygons());
-    const coord_t m = scaled<coord_t>(params.cluster_margin + params.rho_exact) + lg.w;
-    for (size_t ci = 0; ci < lg.clusters.size(); ++ ci) {
-        const Cluster &cl = lg.clusters[ci];
-        ExPolygons     Cs;
-        double         fronts_area = 0.;
-        for (uint32_t idx : cl.fronts) {
-            Cs.push_back(lg.fronts[idx].C);
-            fronts_area += Cs.back().area();
-        }
-        if (fronts_area <= 0. || area(intersection(Cs, cl.band)) >= fronts_area * (1. - 1e-6) - 1.)
-            continue;
-        const float  m1  = 0.01f * float(m);
-        const double arc = scaled<double>(0.005);
-        band_fix[ci] = intersection_ex(offset(offset(Cs, m1, ClipperLib::jtRound, arc), float(m) - m1, ClipperLib::jtRound, arc),
-                                       clip(lg.in->lslices, cl.win.inflated(SCALED_EPSILON)));
-    }
-}
-
 // Ungrounded part of S_n (plan §3.8), once per layer: in W = bbox(UG_{n−1}) ⊕ (w + 1 mm),
 // ((L − U) ∩ W) − ((L_{n−1} − UG_{n−1}) ⊕ w), plus (L − U) of the weak-contact slices; tagged by island tree.
 void LayerEvaluator::Impl::begin_layer(uint32_t n)
@@ -350,7 +323,6 @@ void LayerEvaluator::Impl::begin_layer(uint32_t n)
     contact.reset();
     const LayerGeom &lg = base.layers[n];
     slots.assign(lg.clusters.size(), ClusterSlot());
-    this->check_bands(n);
 
     const bool any_bad = std::any_of(lg.slice_bad.begin(), lg.slice_bad.end(), [](uint8_t b) { return b != 0; });
     if (ug_prev_all.empty() && ! any_bad)
@@ -426,7 +398,7 @@ std::shared_ptr<const ClusterOut> LayerEvaluator::Impl::eval_cluster(uint32_t n,
     const LayerGeom  &lg   = base.layers[n];
     const Cluster    &cl   = lg.clusters[ci];
     const BoundingBox box  = cl.win.inflated(scaled<double>(0.01));
-    const ExPolygons &Lc   = band_fix[ci].empty() ? cl.band : band_fix[ci];
+    const ExPolygons &Lc   = cl.band;                      // ⊇ the fronts (Phase A, offset_keep_thin)
     const ExPolygons  Fcov = out->Fc.empty() ? ExPolygons() : reach.cover(out->Fc, n);
     const Polygons    Tc   = clip(lg.tolerated, box);
 
