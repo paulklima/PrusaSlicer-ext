@@ -19,6 +19,7 @@
 #include "SmartSupportsInternal.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <deque>
 #include <limits>
@@ -52,6 +53,8 @@ constexpr size_t ParallelMisses = 512;
 
 inline double area_mm2(double scaled_area) { return scaled_area * SCALING_FACTOR * SCALING_FACTOR; }
 
+// Clip operand: src prepared for a boolean operation whose subject lies inside bbox. Not a crop: vertices outside
+// the bbox may remain (ClipperUtils::clip_clipper_polygons_with_subject_bbox).
 inline Polygons clip(const ExPolygons &src, const BoundingBox &bbox)
 {
     return ClipperUtils::clip_clipper_polygons_with_subject_bbox(src, bbox);
@@ -254,6 +257,7 @@ struct LayerEvaluator::Impl
     ReachCarry           carry;
     std::vector<uint8_t> unplaced;              // per island tree
 
+    uint32_t   last_committed = 0;              // layer 0 is committed by construction
     // Ungrounded material UG of the last committed layer, tagged by island tree.
     Tagged     ug_prev;
     ExPolygons ug_prev_all;
@@ -359,9 +363,10 @@ void LayerEvaluator::Impl::begin_layer(uint32_t n)
         for (const FrontGeom &f : lg.fronts)
             if (f.bbox.overlap(W))
                 append(fronts_W, to_polygons(f.C));
-        const Polygons S_W = diff(clip(L, W), fronts_W);
+        // Exact crops (clip() keeps vertices outside the box: it only prepares clip operands).
+        const Polygons S_W = diff(crop(L, W), fronts_W);
         if (! S_W.empty()) {
-            const Polygons   grounded = diff(clip(in.layers[n - 1].lslices, W.inflated(double(lg.w) + scaled<double>(0.01))), ug_prev_all);
+            const Polygons   grounded = diff(crop(in.layers[n - 1].lslices, W.inflated(double(lg.w) + scaled<double>(0.01))), ug_prev_all);
             const ExPolygons ug       = grounded.empty() ? union_ex(S_W) :
                 diff_ex(S_W, offset(grounded, float(lg.w + scaled<coord_t>(GroundTolMm)), ClipperLib::jtRound, scaled<double>(0.001)));
             const float reach_tol = float(lg.w + 2 * scaled<coord_t>(GroundTolMm));
@@ -684,8 +689,10 @@ const LayerNeeds &LayerEvaluator::Impl::evaluate(uint32_t n, const ExPolygons &E
         needs = LayerNeeds();
         return needs;
     }
-    if (cur_n != int64_t(n))
+    if (cur_n != int64_t(n)) {
+        assert(n == last_committed + 1);                            // n = last committed layer + 1
         this->begin_layer(n);
+    }
     const LayerGeom &lg = base.layers[n];
 
     // The contact matters only where something is evaluated or stored.
@@ -939,7 +946,8 @@ void LayerEvaluator::Impl::commit(uint32_t n)
         if (! X.empty())
             ug_prev.emplace_back(tag, std::move(X));
     }
-    ug_prev_all = union_of(ug_prev);
+    ug_prev_all    = union_of(ug_prev);
+    last_committed = n;
 
     cur_n     = -1;
     evaluated = false;
