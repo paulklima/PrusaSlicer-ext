@@ -690,6 +690,11 @@ tail per non-tolerated tree, per connected component of its slices:
 last_layer_with_fronts = max n with fronts, tails or manual enforcers
 ```
 
+*Host test 1 (wp-log-wp5.md): slices on layers below `first_tip_layer()` = `max(0, z_top + 2 − raft)` rest on
+the plate (Phase A clears their weak contact and drops the fronts of the cleared slices; `bed = true`). Every bad
+tree slice is an `IslandStart`; tags, folding and `tail_starts` are per start, not per tree; folded material is
+reported as `HangsFromUnplacedIsland`.*
+
 ### 3.7 Reachability, contact and cover (§5; D10, D23, D30, D31; WP2r)
 
 ```
@@ -1107,6 +1112,7 @@ ImGui::SetNextWindowSizeConstraints({0, 0}, {-1, bottom_limit − y})
 | TailWithoutDownwardFacets | "Thin hanging part without downward faces" |
 | SeveralPrintObjects | "Computed for instance N only" |
 | OtherObjectsNotConsidered | "Other objects on the plate are not considered" |
+| HangsFromUnplacedIsland | "Rests on an island that cannot be supported" (note; host test 1) |
 
 ### 6.3 Marker
 

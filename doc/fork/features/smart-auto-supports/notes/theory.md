@@ -402,6 +402,13 @@ resolves them (§3.1).
 - The test is free in 2.9.6: `Layer::lslices_ex[i].overlaps_below` is empty for
   `layer > 0`. It is available right after `posSlice` (`Layer.hpp:135-161`, `195`;
   `PrintObjectSlice.cpp:556-577`; `Layer.cpp:542-566`).
+- *v1 (host test 1, foot model): near-bed starts rest on the plate.* Below the first layer
+  where the slicer can place tree tips (object layer `max(0, z_top + 2 − raft)`), a slice
+  without (strong) contact below hangs at most `z_top + 1` layers (the top contact distance
+  plus one layer) above the plate or raft. Nothing can be placed under it, and the extrusion is
+  laid onto the plate like layer 0. It therefore counts as resting on the plate: no fronts, no
+  island start; the weak-contact rule applies from the next layer on. Before, such a toe tip
+  floating 0.1 mm above the bed made its whole toe one unplaceable island.
 
 **Tolerated islands** (decided before any planning, on geometry only):
 - **Island tree.** An island is tracked upward via `overlaps_above`. Island trees that merge
@@ -417,6 +424,12 @@ resolves them (§3.1).
 
 **Unplaced islands.** Material hanging from an island that cannot be placed becomes **one
 report entry** for that island, not a cascade of new island needs.
+- *v1 (host test 1):* "the island" is an **island start**: a slice of the tree without
+  (strong) contact below. A tree holds one start per local minimum (a toe with its knuckles).
+  Material carries the start it hangs from: a start's own slice, else the ungrounded material
+  it stands on. Only that material folds; the other starts of the same tree stay needs of
+  their own. The folded material is its own note ("Rests on an island that cannot be
+  supported"), not a copy of the island's state and reason.
 
 **Tail (stabilisation zone).**
 - A thin island stays a need until its inscribed width reaches `W_stiff` or it merges, for at

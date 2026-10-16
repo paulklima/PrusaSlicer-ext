@@ -33,6 +33,12 @@ organic branches from this paint, just as it does from your own paint.
     about 1 mm.
   - A thin hanging tip gets support along its thin lower part, until it is about 3 mm thick
     (at most 16 mm high).
+  - A part that starts just above the plate is not an island. Tree support cannot start that low
+    (on the layers up to the top contact distance plus one layer: about 0.5 mm with 0.2 mm layers
+    and 0.2 mm contact distance), and the part is laid onto the plate like the first layer. A toe
+    tip that floats 0.1 mm above the bed counts as standing on the bed.
+  - Every island gets its own support, also when it later grows together with other islands
+    before it reaches the body (the knuckles of a toe hanging from the foot).
   - In this version these values are fixed.
 - **Overhang**: material that sticks out beyond the layer below.
   - A little per layer prints fine; that is the **Overhang angle**.
@@ -313,6 +319,7 @@ Paint-on supports window. It lists everything the run could not handle as planne
 | "Islands not painted (unchecked)" / "Overhangs not painted (unchecked)" | Areas that would be painted if the cause were checked. | Check the cause under Paint. |
 | "Painted areas rely on unpainted planned support (unchecked causes, long bridges)" | The painted areas were computed on the assumption that the unchecked causes and long bridges get support. | Check the cause, or support the long bridges yourself. |
 | "Thin hanging part without downward faces" | A thin hanging part (needle, fin) with no downward faces that could be painted. | Check the preview; if it needs support, add it yourself, for example with a support enforcer volume. |
+| "Rests on an island that cannot be supported" | The material that grows from an island listed under Problems. It is listed once here instead of as many new islands; other islands on the same part are painted as usual. | Solve the island's problem; this area then gets support too. |
 | "Computed for instance N only" | Instances of this object are rotated differently; only one was analysed. | See [section 7](#7-working-with-your-own-paint-and-other-tools). |
 | "Other objects on the plate are not considered" | The analysis looked at this object alone. | Check the preview. |
 | "A raft counts as manual support" | You print on a raft. The raft counts as support you chose yourself. | Nothing. |
