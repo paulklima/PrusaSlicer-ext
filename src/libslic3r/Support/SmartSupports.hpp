@@ -187,7 +187,10 @@ enum class ReportState : uint8_t {
     Unplaceable, BlockedByUser, WillBeDropped, RemainingAfterPaint, OnModelFallback, OnModelTooShort,
     MayMergeOntoModel,                                                          // ← problems
     PartlyOnModel, BelowLowestLevel, LongSpanNotPainted, CauseDisabled, ReliesOnDisabledCauses,
-    TailWithoutDownwardFacets, SeveralPrintObjects, OtherObjectsNotConsidered }; // ← notes
+    TailWithoutDownwardFacets, SeveralPrintObjects, OtherObjectsNotConsidered,
+    HangsFromUnplacedIsland };                                                  // ← notes
+// HangsFromUnplacedIsland: material that hangs from an island start reported as a problem (Unplaceable, BlockedByUser):
+// folded into one note per start instead of a cascade of island needs (theory §3.1). Its own row, not the island's state.
 // Known reason why a need could not be placed (report tooltip).
 enum class Why : uint8_t { None, NotReachable, NoProgress, InterfaceGap, NoTipLayer };
 

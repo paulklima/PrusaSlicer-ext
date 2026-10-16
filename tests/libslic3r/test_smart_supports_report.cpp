@@ -488,7 +488,7 @@ TEST_CASE("build_report: marker position", "[SmartSupports][sas-report]")
 TEST_CASE("build_report: groups and order", "[SmartSupports][sas-report]")
 {
     // The shared group rule (SmartSupports.hpp, used by build_report and the GUI) is the documented one.
-    for (int st = 0; st <= int(ReportState::OtherObjectsNotConsidered); ++ st)
+    for (int st = 0; st <= int(ReportState::HangsFromUnplacedIsland); ++ st)
         for (Cause cause : { Cause::Island, Cause::Cantilever, Cause::LongSpan }) {
             ReportEntry e;
             e.state = ReportState(st);

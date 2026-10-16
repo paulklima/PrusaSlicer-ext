@@ -198,6 +198,7 @@ std::string state_text(const SS::ReportEntry &e, size_t analysed_instance)
     case RS::TailWithoutDownwardFacets: return _u8L("Thin hanging part without downward faces");
     case RS::SeveralPrintObjects:       return format(_u8L("Computed for instance %1% only"), analysed_instance + 1);
     case RS::OtherObjectsNotConsidered: return _u8L("Other objects on the plate are not considered");
+    case RS::HangsFromUnplacedIsland:   return _u8L("Rests on an island that cannot be supported");
     }
     return {};
 }
@@ -222,6 +223,8 @@ std::string advice_text(const SS::ReportEntry &e)
     case RS::OnModelFallback:    return _u8L("No position on the build plate supports this area; support stands on the model.");
     case RS::BelowLowestLevel:   return _u8L("Choose \"Critical and likely\" to paint these areas too.");
     case RS::CauseDisabled:      return _u8L("Check the cause under Paint to paint these areas.");
+    case RS::HangsFromUnplacedIsland:
+        return _u8L("This part grows from an island listed under Problems; it is supported only if that island is.");
     default:                     return {};
     }
 }
@@ -320,12 +323,12 @@ SS::Result fake_run(const SS::AnalysisInput &in, const SS::IsCanceled &is_cancel
         progress(50 + i * 50 / 30);
     }
 
-    static constexpr std::array<ReportState, 15> states {
+    static constexpr std::array<ReportState, 16> states {
         ReportState::Unplaceable, ReportState::BlockedByUser, ReportState::WillBeDropped, ReportState::RemainingAfterPaint,
         ReportState::OnModelFallback, ReportState::OnModelTooShort, ReportState::MayMergeOntoModel, ReportState::PartlyOnModel,
         ReportState::BelowLowestLevel, ReportState::LongSpanNotPainted, ReportState::CauseDisabled,
         ReportState::ReliesOnDisabledCauses, ReportState::TailWithoutDownwardFacets, ReportState::SeveralPrintObjects,
-        ReportState::OtherObjectsNotConsidered };
+        ReportState::OtherObjectsNotConsidered, ReportState::HangsFromUnplacedIsland };
     const size_t num_layers = in.layers.size();
     for (size_t k = 0; k < states.size(); ++ k) {
         ReportEntry e;

@@ -244,6 +244,21 @@ void build_layer_geometry(const AnalysisInput &in, size_t n, LayerGeom &lg)
     // Unsupported area U_n = L_n − S_n = L_n − (L_{n−1} ⊕ w_n), round offset (D24). No area filter (theory §2.1).
     ExPolygons U = Lp.empty() ? L :
         lg.w > 0 ? diff_ex(L, offset(Lp, float(lg.w), ClipperLib::jtRound, scaled<double>(ArcTolStep))) : diff_ex(L, Lp);
+
+    // Below the first tip layer (Reachability::tips_possible) the slicer places no support at all. A slice there
+    // without (strong) contact below hangs at most z_top + 1 layers (the top contact distance plus one layer) above
+    // the plate or raft and is laid onto it like layer 0: it rests on the plate, has no fronts and is no island start
+    // (theory §3.1). Its contact below is plain material from the next layer on, the weak-contact rule applies there.
+    if (n < first_tip_layer(params)) {
+        Polygons on_plate;
+        for (size_t i = 0; i < L.size(); ++ i)
+            if (lg.slice_bad[i]) {
+                append(on_plate, to_polygons(L[i]));
+                lg.slice_bad[i] = 0;
+            }
+        if (! on_plate.empty() && ! U.empty())
+            U = diff_ex(U, on_plate);
+    }
     lg.fronts.reserve(U.size());
     for (ExPolygon &C : U)
         if (const double a = C.area(); a > 0.) {
@@ -333,12 +348,14 @@ void build_island_trees(const AnalysisInput &in, BaseModel &base, const ThrowOnC
                 fn(first_slice[n - 1] + size_t(link.idx));
     };
 
-    // Connected to the bed through overlaps below, support ignored (theory §3.1); weak contact breaks it.
+    // Connected to the bed through overlaps below, support ignored (theory §3.1); weak contact breaks it. Every slice
+    // below the first tip layer rests on the plate (Phase A cleared slice_bad there).
+    const size_t         plate_layers = std::max<size_t>(1, first_tip_layer(params));
     std::vector<uint8_t> bed(total, 0);
     for (size_t n = 0; n < N; ++ n)
         for (size_t i = 0; i < in.layers[n].lslices.size(); ++ i) {
             const size_t g = first_slice[n] + i;
-            if (n == 0)
+            if (n < plate_layers)
                 bed[g] = 1;
             else if (! base.layers[n].slice_bad[i])
                 for_each_below(n, i, [&](size_t j) { bed[g] |= bed[j]; });
@@ -381,6 +398,18 @@ void build_island_trees(const AnalysisInput &in, BaseModel &base, const ThrowOnC
     if (trees.empty())
         return;
 
+    // Island starts: the tree slices without (strong) contact below, bottom up. Every root of a tree is one.
+    for (size_t n = 0; n < N; ++ n)
+        for (size_t i = 0; i < in.layers[n].lslices.size(); ++ i)
+            if (const int32_t t = tree_of[first_slice[n] + i]; t >= 0 && base.layers[n].slice_bad[i]) {
+                IslandStart &start = base.starts.emplace_back();
+                start.id    = int32_t(base.starts.size() - 1);
+                start.layer = uint32_t(n);
+                start.slice = int32_t(i);
+                start.tree  = t;
+                base.layers[n].slice_start[i] = start.id;
+            }
+
     // Merge = the lowest grounded slice that links into the tree.
     for (size_t n = 1; n < N; ++ n)
         for (size_t i = 0; i < in.layers[n].lslices.size(); ++ i)
@@ -411,38 +440,46 @@ void build_island_trees(const AnalysisInput &in, BaseModel &base, const ThrowOnC
     const float          noise      = scaled<float>(0.5 * params.eps);
     std::vector<uint8_t> in_tail(total, 0);
     std::vector<double>  root_z(total, 0.);
+    std::vector<int32_t> root_start(total, -1);                 // IslandStart::id of the branch root (the latest one)
     for (size_t n = 0; n < N; ++ n) {
         if ((n & 63) == 0 && cancel)
             cancel();
         const LayerInput             &li = in.layers[n];
         std::map<int32_t, ExPolygons> needs;                    // ordered by tree id
+        std::map<int32_t, ExPolygons> needs_by_start;           // ordered by start id
         for (size_t i = 0; i < li.lslices.size(); ++ i) {
             const size_t  g = first_slice[n] + i;
             const int32_t t = tree_of[g];
             if (t < 0 || trees[size_t(t)].tolerated)
                 continue;
-            bool   root = true, from_tail = false;
-            double rz   = - std::numeric_limits<double>::max();
+            bool    root = true, from_tail = false;
+            double  rz   = - std::numeric_limits<double>::max();
+            int32_t rs   = -1;
             for_each_below(n, i, [&](size_t j) {
                 if (tree_of[j] >= 0) {
                     root = false;
                     if (in_tail[j]) {
                         from_tail = true;
-                        rz = std::max(rz, root_z[j]);
+                        if (root_z[j] > rz || (root_z[j] == rz && root_start[j] >= 0 && (rs < 0 || root_start[j] < rs))) {
+                            rz = root_z[j];
+                            rs = root_start[j];
+                        }
                     }
                 }
             });
-            if (root)
+            if (root) {
                 rz = li.slice_z;
-            else if (! from_tail)
+                rs = base.layers[n].slice_start[i];             // a root has no contact below: always a start
+            } else if (! from_tail)
                 continue;
             if (li.slice_z - rz > params.H_tail + EPSILON)
                 continue;
             const ExPolygon &part = li.lslices[i];
             if (! shrink_ex(ExPolygons{ part }, stiff_half).empty())
                 continue;                                       // stiff enough: the tail ends here
-            in_tail[g] = 1;
-            root_z[g]  = rz;
+            in_tail[g]    = 1;
+            root_z[g]     = rz;
+            root_start[g] = rs;
             IslandTree &tree = trees[size_t(t)];
             tree.tail_last = std::max(tree.tail_last, uint32_t(n));
             ExPolygons tn;
@@ -457,11 +494,15 @@ void build_island_trees(const AnalysisInput &in, BaseModel &base, const ThrowOnC
                     tree.tail_without_downward = true;
                 }
             }
-            if (! tn.empty())
+            if (! tn.empty()) {
+                append(needs_by_start[rs], tn);
                 append(needs[t], std::move(tn));
+            }
         }
         for (auto &[t, area] : needs)
             base.layers[n].tail_needs.emplace_back(t, std::move(area));
+        for (auto &[s, area] : needs_by_start)
+            base.layers[n].tail_starts.emplace_back(s, std::move(area));
     }
 }
 
@@ -495,6 +536,7 @@ BaseModel build_base_model(const AnalysisInput &in, const ThrowOnCancel &cancel,
         }
         lg.slice_bad.assign(li.lslices.size(), 0);
         lg.slice_tree.assign(li.lslices.size(), -1);
+        lg.slice_start.assign(li.lslices.size(), -1);
     }
     if (N == 0)
         return base;

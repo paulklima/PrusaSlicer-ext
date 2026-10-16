@@ -164,7 +164,7 @@ struct Planner
     std::vector<Placement> as_placements(Cause cause, const ExPolygons &area, coord_t radius) const;
     std::optional<BoundingBox> touched_of(const ExPolygons &added) const;
     ExPolygons add_need(Cause cause, Level level, Why why, ReportState reason, ExPolygons area);
-    void       mark_islands(const ExPolygons &pieces, ReportState reason, Why why);
+    void       mark_islands(const ExPolygons &pieces);
     bool       painted(const Placement &pl) const;
 
     // ---- after the loop
@@ -187,9 +187,8 @@ struct Planner
     Plan                 plan;
     uint32_t             next_id      = 0;
 
-    // Island trees with an unplaced need (folding): the layer, reason and why of their first residual.
-    struct TreeMark { bool marked = false; uint32_t layer = 0; ReportState reason = ReportState::Unplaceable; Why why = Why::None; };
-    std::vector<TreeMark> trees;
+    // Island starts with an unplaced need (folding): the layer of their first residual, UINT32_MAX = placed so far.
+    std::vector<uint32_t> start_marked;
 
     // ---- state of the current layer
     uint32_t                                  n = 0;
@@ -198,7 +197,7 @@ struct Planner
     LayerNeeds                                L;          // evaluation of (E, overrides)
     ExPolygons                                blk;        // blocker zone (projections ⊕ clearance)
     std::vector<size_t>                       layer_placements;
-    std::vector<std::pair<ExPolygons, std::pair<ReportState, Why>>> island_residual;   // island pieces reported at n
+    std::vector<ExPolygons>                   island_residual;   // island pieces reported (unplaced) at n
     std::array<ExPolygons, 5>                 why;        // known reasons of the current cause (by Why): evaluations, stages
 };
 
@@ -218,7 +217,7 @@ Planner::Planner(const AnalysisInput &in, const BaseModel &base, Reachability &r
             h_min = std::min(h_min, layer.height);
     if (h_min < std::numeric_limits<double>::max() && p.edge_limit > 0.)
         k_d = std::max(1, int(std::ceil(p.edge_limit / h_min - 1e-9)));
-    trees.assign(base.trees.size(), TreeMark());
+    start_marked.assign(base.starts.size(), UINT32_MAX);
     plan.stats.resize(in.layers.size());
     plan.zones_paintable.resize(in.layers.size());
     plan.zones_unpainted.resize(in.layers.size());
@@ -332,24 +331,13 @@ ExPolygons Planner::add_need(Cause cause, Level level, Why why, ReportState reas
     return area;
 }
 
-// The island trees of residual island pieces are unplaced: the evaluator folds the needs hanging from them into one
-// entry per tree (WP2c1a: the tree of the slice containing the piece).
-void Planner::mark_islands(const ExPolygons &pieces, ReportState reason, Why why)
+// The island starts of residual island pieces are unplaced: the evaluator folds the needs hanging from them (and only
+// from them, not from the other starts of the same tree) into one note per start (theory §3.1).
+void Planner::mark_islands(const ExPolygons &pieces)
 {
-    const LayerGeom  &lg     = base.layers[n];
-    const ExPolygons &slices = in.layers[n].lslices;
-    for (const ExPolygon &piece : pieces) {
-        const BoundingBox pb = get_extents(piece.contour);
-        for (size_t i = 0; i < slices.size() && i < lg.slice_tree.size(); ++ i) {
-            const int32_t t = lg.slice_tree[i];
-            if (t < 0 || size_t(t) >= trees.size() || trees[size_t(t)].marked || ! in.layers[n].slices[i].bbox.overlap(pb))
-                continue;
-            if (! intersection(ExPolygons{ piece }, ExPolygons{ slices[i] }).empty()) {
-                trees[size_t(t)] = { true, n, reason, why };
-                ev.mark_tree_unplaced(t);
-            }
-        }
-    }
+    for (const int32_t s : ev.mark_unplaced(pieces))
+        if (s >= 0 && size_t(s) < start_marked.size() && start_marked[size_t(s)] == UINT32_MAX)
+            start_marked[size_t(s)] = n;
 }
 
 // Manual enforcers the slicer will drop (P5, theory §5.3): the painted overhang that the contact of the manual zones
@@ -577,7 +565,7 @@ void Planner::residual(Cause cause, const ExPolygons &tried, bool roof_rejected,
     auto report = [&](Level level, Why w, ReportState reason, ExPolygons area) {
         ExPolygons kept = this->add_need(cause, level, w, reason, std::move(area));
         if (cause == Cause::Island && ! kept.empty())
-            island_residual.emplace_back(std::move(kept), std::make_pair(reason, w));
+            island_residual.emplace_back(std::move(kept));
     };
     for (int l = int(lowest); l < 3; ++ l) {
         ExPolygons X = L.need[int(cause)][l];
@@ -671,8 +659,8 @@ void Planner::place_cause(Cause cause)
         }
     }
     if (cause == Cause::Island && ! island_residual.empty()) {
-        for (const auto &[pieces, reason] : island_residual)
-            this->mark_islands(pieces, reason.first, reason.second);
+        for (const ExPolygons &pieces : island_residual)
+            this->mark_islands(pieces);
         island_residual.clear();
         L = ev.evaluate(n, E, overrides, std::nullopt);               // the needs hanging from them fold from here on
     }
@@ -700,11 +688,11 @@ void Planner::plan_layer(uint32_t layer)
                 if (! L.need[c][l].empty())
                     this->add_need(Cause(c), Level(l), Why::None, ReportState::BelowLowestLevel, L.need[c][l]);
     }
-    // Folded needs of unplaced island trees: one report entry per tree (the pieces merge across the layers). The layer
-    // that marked a tree has reported its pieces already.
-    for (const auto &[t, area] : L.folded)
-        if (t >= 0 && size_t(t) < trees.size() && trees[size_t(t)].marked && trees[size_t(t)].layer != n)
-            this->add_need(Cause::Island, Level::Must, trees[size_t(t)].why, trees[size_t(t)].reason, area);
+    // Folded needs of unplaced island starts: their own note (the pieces merge across the layers), not the state and
+    // reason of the island's problem row. The layer that marked a start has reported its pieces already.
+    for (const auto &[s, area] : L.folded)
+        if (s >= 0 && size_t(s) < start_marked.size() && start_marked[size_t(s)] != UINT32_MAX && start_marked[size_t(s)] != n)
+            this->add_need(Cause::Island, Level::Must, Why::None, ReportState::HangsFromUnplacedIsland, area);
     ev.commit(n);
 
     ExPolygons paintable, unpainted;
@@ -858,13 +846,13 @@ std::vector<Need> verify(const AnalysisInput &in, const BaseModel &base, Reachab
         return {};
 
     const PassResult        pass = evaluate_pass(in, base, reach, E_act, cancel, {});
-    // Only residual pieces that are unplaced needs (with the folded trees, which carry their tree's reason) are "already
+    // Only residual pieces that are unplaced needs (with the material folded into unplaced island starts) are "already
     // reported". The notes and flags of placed zones (PartlyOnModel, OnModelFallback, OnModelTooShort, MayMergeOntoModel,
     // LongSpanNotPainted) carry the placement's area: a need left there because the paint falls short is exactly what
     // the verification has to report (review B M1). BelowLowestLevel bands are not needs at the painted levels either.
     auto unplaced = [](ReportState s) {
         return s == ReportState::Unplaceable || s == ReportState::BlockedByUser || s == ReportState::WillBeDropped ||
-               s == ReportState::TailWithoutDownwardFacets;
+               s == ReportState::TailWithoutDownwardFacets || s == ReportState::HangsFromUnplacedIsland;
     };
     std::vector<ExPolygons> reported(in.layers.size());
     for (const Need &need : plan.residual)

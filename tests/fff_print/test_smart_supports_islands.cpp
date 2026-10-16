@@ -262,3 +262,74 @@ TEST_CASE("Cluster bands contain all fronts ⊕ m", "[SmartSupports][sas-islands
         }
     }
 }
+
+// Host test 1 (foot model, wp-log-wp5.md): every slice of a tree without contact below is an island start of its own
+// (folding is per start, theory §3.1); below the first tip layer such slices rest on the plate.
+TEST_CASE("Island starts: one per slice without contact below, none below the first tip layer", "[SmartSupports][sas-islands]")
+{
+    // PO-frame point of a point of the toe's design frame (all parts share one volume matrix).
+    auto po_point = [](const AnalysisInput &in, double x, double y) {
+        const Vec3d p = in.volumes.front().trafo * Vec3d(x, y, 0.);
+        return Point::new_scale(p.x(), p.y());
+    };
+    SECTION("tip at z 1: one tree, four starts with their own tails") {
+        const auto [in, base] = base_of("toe_" + std::to_string(1.), [] { return toe(1.); });
+        REQUIRE(base.trees.size() == 1);
+        REQUIRE(base.starts.size() == 4);
+        const double bottoms[4] = { 1., toe_knuckle_bottom[0], toe_knuckle_bottom[1], toe_knuckle_bottom[2] };
+        const double xs[4]      = { 0., toe_knuckle_x[0], toe_knuckle_x[1], toe_knuckle_x[2] };
+        for (size_t s = 0; s < 4; ++ s) {
+            const IslandStart &start = base.starts[s];
+            CHECK(start.id == int32_t(s));
+            CHECK(start.tree == 0);
+            CHECK(in.layers[start.layer].slice_z == Approx(bottoms[s] + 0.1).margin(0.01));
+            REQUIRE(start.slice >= 0);
+            CHECK(in.layers[start.layer].lslices[size_t(start.slice)].contains(po_point(in, xs[s], 0.)));
+            CHECK(base.layers[start.layer].slice_start[size_t(start.slice)] == start.id);
+            CHECK(base.layers[start.layer].slice_bad[size_t(start.slice)] == 1);
+            // A root's tail starts with its whole slice, keyed by its start.
+            bool found = false;
+            for (const auto &[id, area] : base.layers[start.layer].tail_starts)
+                found |= id == start.id && ! area.empty();
+            CHECK(found);
+        }
+        // tail_starts holds exactly the pieces of tail_needs, split by the start of their branch.
+        for (const LayerGeom &lg : base.layers) {
+            double a_tree = 0., a_start = 0.;
+            for (const auto &[t, area] : lg.tail_needs)
+                a_tree += area_mm2(area);
+            for (const auto &[s, area] : lg.tail_starts) {
+                CHECK((s >= 0 && size_t(s) < base.starts.size()));
+                a_start += area_mm2(area);
+            }
+            CHECK(a_start == Approx(a_tree).epsilon(1e-9));
+        }
+    }
+    SECTION("tip 0.15 / 0.35 above the bed: it rests on the plate, the knuckles are their own trees") {
+        for (const double hover : { 0.15, 0.35 }) {
+            const auto [in, base] = base_of("toe_" + std::to_string(hover), [hover] { return toe(hover); });
+            const uint32_t first_tip = first_tip_layer(in.params);
+            REQUIRE(first_tip == 3);                              // z_top 1, no raft: tips from object layer 3 on
+            // Tip, column and rod are grounded through the tip resting on the plate; each knuckle merges into the rod.
+            CHECK(base.trees.size() == 3);
+            CHECK(base.starts.size() == 3);
+            for (const IslandTree &tree : base.trees)
+                CHECK(tree.first >= first_tip);
+            for (const IslandStart &start : base.starts)
+                CHECK(start.layer >= first_tip);
+            // The tip's slices below the first tip layer: grounded, no weak contact, no fronts.
+            const Point tip = po_point(in, 0., 0.);
+            int tip_layers = 0;
+            for (uint32_t n = 1; n < first_tip; ++ n)
+                for (size_t i = 0; i < in.layers[n].lslices.size(); ++ i)
+                    if (in.layers[n].lslices[i].contains(tip)) {
+                        ++ tip_layers;
+                        CHECK(base.layers[n].slice_tree[i] == -1);
+                        CHECK(base.layers[n].slice_bad[i] == 0);
+                        for (const FrontGeom &f : base.layers[n].fronts)
+                            CHECK(intersection(ExPolygons{ f.C }, ExPolygons{ in.layers[n].lslices[i] }).empty());
+                    }
+            CHECK(tip_layers == (hover < 0.2 ? 2 : 1));
+        }
+    }
+}
