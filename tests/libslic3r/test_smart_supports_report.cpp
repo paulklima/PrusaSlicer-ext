@@ -111,7 +111,8 @@ Placement make_placement(Cause cause, Level level, uint32_t layer, ExPolygons ar
 
 ExPolygons square(double x, double y, double size) { return { rectangle_mm(x, y, x + size, y + size) }; }
 
-bool is_problem(const ReportEntry &e)
+// The documented group rule (plan §3.11, WP2c0): the reference for SmartSupports::is_problem().
+bool expected_problem(const ReportEntry &e)
 {
     return e.state == ReportState::BlockedByUser ? e.cause == Cause::Island : e.state <= ReportState::MayMergeOntoModel;
 }
@@ -305,6 +306,7 @@ TEST_CASE("config_fingerprint sensitivity", "[SmartSupports][sas-report]")
         CHECK(changed("support_material_buildplate_only", config.opt_bool("support_material_buildplate_only") ? "0" : "1"));
         CHECK(changed("support_tree_tip_diameter", "1.2"));
         CHECK(changed("support_tree_angle", "35"));
+        CHECK(changed("support_tree_angle_slow", "30"));
         CHECK(changed("raft_layers", "2"));
         CHECK(changed("layer_height", "0.15"));
         CHECK(changed("first_layer_height", "0.25"));
@@ -485,6 +487,15 @@ TEST_CASE("build_report: marker position", "[SmartSupports][sas-report]")
 
 TEST_CASE("build_report: groups and order", "[SmartSupports][sas-report]")
 {
+    // The shared group rule (SmartSupports.hpp, used by build_report and the GUI) is the documented one.
+    for (int st = 0; st <= int(ReportState::OtherObjectsNotConsidered); ++ st)
+        for (Cause cause : { Cause::Island, Cause::Cantilever, Cause::LongSpan }) {
+            ReportEntry e;
+            e.state = ReportState(st);
+            e.cause = cause;
+            CHECK(is_problem(e) == expected_problem(e));
+        }
+
     const AnalysisInput in   = report_input();
     Plan                plan = empty_plan(in);
     const auto          U    = ReportState::Unplaceable;

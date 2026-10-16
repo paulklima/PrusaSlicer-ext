@@ -59,13 +59,7 @@ constexpr auto        ResliceRetry   = std::chrono::seconds(1);
 constexpr int         PollFrameMs    = 100;
 constexpr int         MaxVisibleRows = 10;
 
-// Group of a report row (mirrors WP2c0's build_report): BlockedByUser is a problem only for islands.
-bool is_problem(const SS::ReportEntry &e)
-{
-    if (e.state == SS::ReportState::BlockedByUser)
-        return e.cause == SS::Cause::Island;
-    return uint8_t(e.state) <= uint8_t(SS::ReportState::MayMergeOntoModel);
-}
+using SS::is_problem;                    // group of a report row, shared with build_report
 
 bool is_canceled_exception(const std::exception_ptr &eptr)
 {

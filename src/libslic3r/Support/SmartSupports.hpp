@@ -79,6 +79,7 @@ struct Params {
     double tip_diameter = 0.8;                                    // support_tree_tip_diameter clamped to [0, branch_diameter]
     double branch_diameter = 2.0;                                 // support_tree_branch_diameter
     double tree_angle_deg = 40.0;                                 // support_tree_angle, clamped to [0, 90)
+    double tree_angle_slow_deg = 25.0;                            // support_tree_angle_slow, clamped to [0, tree_angle] (TreeSupportCommon.cpp:83)
     double branch_distance = 1.0;                                 // support_tree_branch_distance
     double tip_spacing = 0.4 * 100. / 15. + 0.4;                  // connect_length = lw·100/top_rate + max(2r − lw, 0), TreeSupport.cpp:1258 (≈ 3.07)
     double xy_distance = 0.225;                                   // support_material_xy_spacing of ext_width (TreeSupportCommon.cpp:58)
@@ -203,6 +204,16 @@ struct ReportEntry {
     double area_mm2 = 0;
     int count = 1;                                      // merged pieces
 };
+// Report group of a row (§3.11): the problems are the states up to MayMergeOntoModel, except BlockedByUser, which is
+// a problem only for islands (a blocked island fails; a blocked overhang is the user's choice). Shared by build_report
+// and the GUI.
+inline bool is_problem(const ReportEntry &e)
+{
+    if (e.state == ReportState::BlockedByUser)
+        return e.cause == Cause::Island;
+    return uint8_t(e.state) <= uint8_t(ReportState::MayMergeOntoModel);
+}
+
 
 // Paint result of one VolumeInput.
 struct VolumePaint { ObjectID volume_id; TriangleSelector::TriangleSplittingData data; bool changed = false; };
