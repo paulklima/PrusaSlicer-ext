@@ -74,6 +74,7 @@ Params derive_params(const PrintObject &po, const UserParams &up)
     params.branch_diameter     = config.support_tree_branch_diameter.value;
     params.tip_diameter        = std::clamp(config.support_tree_tip_diameter.value, 0., params.branch_diameter);
     params.tree_angle_deg      = std::clamp(config.support_tree_angle.value, 0., 90.);
+    params.tree_angle_slow_deg = std::clamp(config.support_tree_angle_slow.value, 0., params.tree_angle_deg);
     params.branch_distance     = config.support_tree_branch_distance.value;
     // connect_length of generate_initial_areas() (TreeSupport.cpp:1258), r = tip_diameter / 2.
     const double top_rate      = config.support_tree_top_rate.value;

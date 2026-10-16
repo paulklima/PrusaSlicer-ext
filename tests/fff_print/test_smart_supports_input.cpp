@@ -43,6 +43,7 @@ TEST_CASE("derive_params mirrors the tree support settings", "[SmartSupports][sa
             CHECK(p.tip_diameter == Approx(2. * mm(s.min_radius)).margin(1e-5));
             CHECK(p.branch_diameter == Approx(2. * mm(s.branch_radius)).margin(1e-5));
             CHECK(p.tree_angle_deg == Approx(slicer.mesh_group.support_tree_angle * 180. / M_PI).margin(1e-6));
+            CHECK(p.tree_angle_slow_deg == Approx(slicer.mesh_group.support_tree_angle_slow * 180. / M_PI).margin(1e-6));
             CHECK(p.branch_distance == Approx(mm(slicer.mesh_group.support_tree_branch_distance)).margin(1e-5));
             CHECK(p.xy_distance == Approx(mm(s.xy_distance)).margin(1e-5));
             CHECK(p.xy_min_distance == Approx(mm(s.xy_min_distance)).margin(1e-5));
@@ -130,6 +131,7 @@ TEST_CASE("test_params() matches derive_params() of the default test config", "[
     CHECK(p.tip_diameter == Approx(t.tip_diameter));
     CHECK(p.branch_diameter == Approx(t.branch_diameter));
     CHECK(p.tree_angle_deg == Approx(t.tree_angle_deg));
+    CHECK(p.tree_angle_slow_deg == Approx(t.tree_angle_slow_deg));
     CHECK(p.branch_distance == Approx(t.branch_distance));
     CHECK(p.tip_spacing == Approx(t.tip_spacing).margin(1e-3));
     CHECK(p.xy_distance == Approx(t.xy_distance).margin(1e-4));

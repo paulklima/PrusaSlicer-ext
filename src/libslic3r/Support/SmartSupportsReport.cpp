@@ -135,8 +135,8 @@ static const char* const fingerprint_keys[] = {
     "support_material_bottom_interface_layers", "support_material_buildplate_only", "support_material_contact_distance",
     "support_material_enforce_layers", "support_material_extruder", "support_material_extrusion_width",
     "support_material_interface_layers", "support_material_style", "support_material_xy_spacing", "support_tree_angle",
-    "support_tree_branch_diameter", "support_tree_branch_distance", "support_tree_tip_diameter", "support_tree_top_rate",
-    "xy_size_compensation",
+    "support_tree_angle_slow", "support_tree_branch_diameter", "support_tree_branch_distance", "support_tree_tip_diameter",
+    "support_tree_top_rate", "xy_size_compensation",
 };
 
 static void hash_config(Fingerprint &fp, const DynamicPrintConfig &cfg)
@@ -210,13 +210,8 @@ uint64_t config_fingerprint(const DynamicPrintConfig &effective, const ModelObje
 static constexpr double report_merge_gap_mm  = 1.;
 static constexpr int    report_cap_per_group = 50;
 
-// 0 = problems, 1 = notes. A blocked island is a problem (the island fails); a blocked overhang is the user's choice.
-static int report_group(const ReportEntry &e)
-{
-    if (e.state == ReportState::BlockedByUser)
-        return e.cause == Cause::Island ? 0 : 1;
-    return e.state <= ReportState::MayMergeOntoModel ? 0 : 1;
-}
+// 0 = problems, 1 = notes (is_problem(), SmartSupports.hpp).
+static int report_group(const ReportEntry &e) { return is_problem(e) ? 0 : 1; }
 
 // Summary rows (one per run or per cause) come first in the notes group, so the cap never hides them.
 static bool is_summary_state(ReportState s)
