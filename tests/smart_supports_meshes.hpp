@@ -258,6 +258,26 @@ inline Parts figurine_proxy()
              translate(its_make_sphere(10., fa), Vec3d(0., 0., 86.)) };
 }
 
+// Toe of host test 1 (foot model, wp-log-wp5.md): an inverted 60° cone tip (apex `hover` above the bed, R 2), a 2 × 2
+// column from the cone up into a rod (x −2 … 26, 4 wide, z 6 … 9.2) and three knuckle balls R 1.7 under the rod
+// (centres at x = toe_knuckle_x, bottoms at toe_knuckle_bottom). The rod hangs from a plate (z 9 … 11) carried by a
+// post at x 30 … 34 (it starts on the bed, so the object is not lifted): tip, column, rod and knuckles form one
+// island tree up to the plate unless the tip rests on the plate.
+inline constexpr double toe_knuckle_x[3]      = { 8., 14., 20. };
+inline constexpr double toe_knuckle_bottom[3] = { 2.8, 3.4, 4.0 };
+inline Parts toe(double hover)
+{
+    const double R = 2., cone_top = hover + R * std::tan(M_PI / 3.);
+    Parts out { revolve({ { 0., hover }, { R, cone_top }, { 0., cone_top } }, 64),
+                box({ -1., -1., cone_top - 0.2 }, { 1., 1., 6.5 }),
+                box({ -2., -2., 6. }, { 26., 2., 9.2 }),
+                box({ -2., -3., 9. }, { 34., 3., 11. }),
+                box({ 30., -3., 0. }, { 34., 3., 9.2 }) };
+    for (int k = 0; k < 3; ++ k)
+        out.push_back(translate(its_make_sphere(1.7, M_PI / 45.), Vec3d(toe_knuckle_x[k], 0., toe_knuckle_bottom[k] + 1.7)));
+    return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Analysis inputs
 

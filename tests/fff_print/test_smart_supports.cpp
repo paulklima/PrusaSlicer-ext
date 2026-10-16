@@ -49,7 +49,7 @@ const char* state_name(ReportState s)
     static const char *names[] = { "Unplaceable", "BlockedByUser", "WillBeDropped", "RemainingAfterPaint", "OnModelFallback",
                                    "OnModelTooShort", "MayMergeOntoModel", "PartlyOnModel", "BelowLowestLevel", "LongSpanNotPainted",
                                    "CauseDisabled", "ReliesOnDisabledCauses", "TailWithoutDownwardFacets", "SeveralPrintObjects",
-                                   "OtherObjectsNotConsidered" };
+                                   "OtherObjectsNotConsidered", "HangsFromUnplacedIsland" };
     return names[int(s)];
 }
 const char* why_name(Why w)
@@ -1222,6 +1222,69 @@ Parts shelf_over_block() { Parts out = shelf_cube(20., 15.); out.push_back(box({
 
 } // namespace
 
+// Host test 1 (foot model, wp-log-wp5.md): share of a knuckle's first island slice under island paint, as the slicer
+// projects the result paint; −1 if no slice holds the knuckle's axis.
+static double toe_knuckle_painted(const SasRun &r, int k)
+{
+    const AnalysisInput &in = r.input;
+    const Vec3d          c  = in.volumes.front().trafo * Vec3d(toe_knuckle_x[k], 0., 0.);
+    const Point          p  = Point::new_scale(c.x(), c.y());
+    size_t               n  = 0;
+    while (n + 1 < in.layers.size() && in.layers[n].slice_z < toe_knuckle_bottom[k])
+        ++ n;
+    ExPolygons slice;
+    for (const ExPolygon &ex : in.layers[n].lslices)
+        if (ex.contains(p))
+            slice.push_back(ex);
+    if (slice.empty())
+        return -1.;
+    std::vector<const TriangleSelector::TriangleSplittingData*> per_volume;
+    for (const VolumePaint &vp : r.result.paint)
+        per_volume.push_back(&vp.data);
+    REQUIRE(per_volume.size() == in.volumes.size());
+    const std::vector<Polygons> proj = project_states(in, per_volume, [](TriangleStateType s) {
+        return is_auto_state(s) && (auto_mask(s) & cbIsland) != 0; }, {});
+    return mm2(intersection_ex(slice, proj[n])) / mm2(slice);
+}
+
+TEST_CASE("Host test 1: toe tips just above the bed, knuckles on the same island tree", "[SmartSupports][sas-reference]")
+{
+    SECTION("tip 0.15 / 0.35 mm above the bed: it rests on the plate, every knuckle is painted") {
+        for (const double hover : { 0.15, 0.35 }) {
+            const SasPrint   &sp   = cached_print("toe_" + std::to_string(hover), [hover] { return toe(hover); }, sas_config());
+            const std::string name = "host test 1, toe tip " + std::to_string(hover);
+            const SasRun      r    = run_ref(name.c_str(), sp);
+            // Before: the tip was an island start on layer 1 / 2 below the first tip layer (Unplaceable/NoTipLayer); its tree
+            // held the column, the rod and all knuckles, so every later island need folded into that row, unpainted.
+            for (const ReportEntry &e : r.result.report) {
+                CHECK(! (e.cause == Cause::Island && e.why == Why::NoTipLayer));
+                CHECK(e.state != ReportState::HangsFromUnplacedIsland);
+                CHECK(! (is_problem(e) && e.cause == Cause::Island));
+            }
+            for (int k = 0; k < 3; ++ k)
+                CHECK(toe_knuckle_painted(r, k) > 0.9);
+        }
+    }
+    SECTION("tip at z 1, interface 3: InterfaceGap rings of the tip fold only what hangs from the tip") {
+        const SasPrint &sp = cached_print("toe_" + std::to_string(1.), [] { return toe(1.); },
+                                          sas_config({ { "support_material_interface_layers", 3 } }));
+        const SasRun    r  = run_ref("host test 1, toe tip 1.0, interface 3", sp);
+        int gap_rows = 0;
+        for (const ReportEntry &e : r.result.report)
+            gap_rows += e.state == ReportState::Unplaceable && e.cause == Cause::Island && e.why == Why::InterfaceGap;
+        CHECK(gap_rows >= 1);
+        // Before: the tip's first leftover ring marked the whole tree unplaced and the knuckles, later starts of the same
+        // tree, folded into it unpainted. Now each start folds only the material hanging from it.
+        for (int k = 0; k < 3; ++ k)
+            CHECK(toe_knuckle_painted(r, k) > 0.9);
+        for (const ReportEntry &e : r.result.report)
+            if (e.state == ReportState::HangsFromUnplacedIsland) {
+                CHECK(! is_problem(e));
+                CHECK(e.why == Why::None);
+            }
+    }
+}
+
 TEST_CASE("Report: tails without downward facets, unplaced islands fold, dropped manual paint", "[SmartSupports][sas-reference]")
 {
     SECTION("needle: the tip is placed, its tail has no downward facets") {
@@ -1232,7 +1295,7 @@ TEST_CASE("Report: tails without downward facets, unplaced islands fold, dropped
         CHECK(! placements_of(r.result, Cause::Island).empty());
         CHECK(rows_with(r.result, ReportState::TailWithoutDownwardFacets) == 1);
     }
-    SECTION("ball in a cup: on the model (prefer plate); unplaceable and folded into one row (plate only)") {
+    SECTION("ball in a cup: on the model (prefer plate); unplaceable plus one note for the cap hanging from it (plate only)") {
         {
             const SasPrint &sp = cached_print("ball_in_cup", [] { return ball_in_cup(); }, sas_config());
             const SasRun    r  = run_ref("ball in a cup, prefer plate", sp);
@@ -1249,16 +1312,29 @@ TEST_CASE("Report: tails without downward facets, unplaced islands fold, dropped
         const SasPrint &sp = cached_print("ball_in_cup", [] { return ball_in_cup(); }, sas_config({ { "support_material_buildplate_only", true } }));
         const SasRun    r  = run_ref("ball in a cup, plate only", sp, up);
         CHECK(r.result.placements.empty());
-        int rows = 0;
+        int      rows = 0, hanging = 0;
+        uint32_t island_layer = 0;
         for (const ReportEntry &e : r.result.report)
             if (e.state == ReportState::Unplaceable && e.cause == Cause::Island) {
                 ++ rows;
+                island_layer = e.layer_last;
                 CHECK(e.why == Why::NotReachable);
-                // The island and the cap hanging from it (fronts up to its 45° line, 2.3 mm): one row over the layers.
-                CHECK(e.layer_last >= e.layer_first + 10);
-                CHECK(e.count >= 10);
+                CHECK(is_problem(e));
+            }
+        for (const ReportEntry &e : r.result.report)
+            if (e.state == ReportState::HangsFromUnplacedIsland) {
+                // The cap hanging from the island (fronts up to its 45° line, 2.3 mm): one note of its own over the
+                // layers above the island. Host test 1: folded rows no longer carry the island's state and reason.
+                ++ hanging;
+                CHECK(e.cause == Cause::Island);
+                CHECK(e.why == Why::None);
+                CHECK(! is_problem(e));
+                CHECK(e.layer_first == island_layer + 1);
+                CHECK(e.layer_last >= e.layer_first + 8);
+                CHECK(e.count >= 9);
             }
         CHECK(rows == 1);
+        CHECK(hanging == 1);
     }
     SECTION("manual enforcer under a T arm over a base, build plate only: dropped") {
         UserParams up = ref_params();

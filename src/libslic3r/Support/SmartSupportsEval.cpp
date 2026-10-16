@@ -196,7 +196,7 @@ struct FieldPart { ExPolygons area; BoundingBox bbox; std::shared_ptr<const Reac
 // Per front of a cluster: what commit() needs for the carry and for UG_n.
 struct FrontOut {
     bool                   grounded = false;
-    int32_t                tag      = -1;          // non-grounded: island tree the material hangs from (−1 unknown)
+    int32_t                tag      = -1;          // non-grounded: island start the material hangs from (−1 unknown)
     std::vector<FieldPart> fields;                 // grounded fronts with a field
     ExPolygons             zero;                   // covered_all ∪ hoop ∪ (C ∩ F⁺): c* = 0 for the carry
 };
@@ -219,7 +219,7 @@ struct ClusterSlot {
     Memo                              memo;
 };
 
-// Regions tagged by island tree (−1: unknown), sorted by tag.
+// Regions tagged by island start (IslandStart::id, −1: unknown), sorted by tag.
 using Tagged = std::vector<std::pair<int32_t, ExPolygons>>;
 
 ExPolygons union_of(const Tagged &tagged)
@@ -254,10 +254,11 @@ struct LayerEvaluator::Impl
     const Params        &params;
     coord_t              gap_band;              // G
     ReachCarry           carry;
-    std::vector<uint8_t> unplaced;              // per island tree
+    std::vector<uint8_t> unplaced;              // per island start
+    std::vector<int32_t> tree_start;            // per island tree: its first start (tag of tolerated material)
 
     uint32_t   last_committed = 0;              // layer 0 is committed by construction
-    // Ungrounded material UG of the last committed layer, tagged by island tree.
+    // Ungrounded material UG of the last committed layer, tagged by island start.
     Tagged     ug_prev;
     ExPolygons ug_prev_all;
 
@@ -270,12 +271,16 @@ struct LayerEvaluator::Impl
     std::shared_ptr<const Reachability::Contact> contact;   // of the last evaluate()
     bool                     evaluated = false;
     LayerNeeds               needs;
+    Tagged                   island_src;        // (start, C') of the non-grounded fronts of the last evaluate()
 };
 
 LayerEvaluator::Impl::Impl(const AnalysisInput &in, const BaseModel &base, const Reachability &reach, const ThrowOnCancel &cancel) :
     in(in), base(base), reach(reach), cancel(cancel), params(in.params), gap_band(scaled<coord_t>(reach.gap_band_mm())),
-    carry(in.params), unplaced(base.trees.size(), 0)
+    carry(in.params), unplaced(base.starts.size(), 0), tree_start(base.trees.size(), -1)
 {
+    for (const IslandStart &start : base.starts)
+        if (start.tree >= 0 && size_t(start.tree) < tree_start.size() && tree_start[size_t(start.tree)] < 0)
+            tree_start[size_t(start.tree)] = start.id;
     // Layer 0 rests on the bed: no fronts, nothing ungrounded. Its w is part of the reach R of the layers above.
     if (! base.layers.empty())
         carry.push(0, base.layers.front().z_top, base.layers.front().w, {});
@@ -290,7 +295,7 @@ ExPolygons LayerEvaluator::Impl::cover_near(const ExPolygons &F, const BoundingB
     return Fn.empty() ? ExPolygons() : reach.cover(Fn, n);
 }
 
-// Tree of the ungrounded material of S_n that touches C (lowest tree id, −1 if none is known).
+// Start of the ungrounded material of S_n that touches C (lowest start id, −1 if none is known).
 int32_t LayerEvaluator::Impl::ungrounded_tag(const ExPolygon &C) const
 {
     if (ugs_tagged.empty())
@@ -343,7 +348,7 @@ void LayerEvaluator::Impl::begin_layer(uint32_t n)
                 diff_ex(S_W, offset(grounded, float(lg.w + scaled<coord_t>(GroundTolMm)), ClipperLib::jtRound, scaled<double>(0.001)));
             const float reach_tol = float(lg.w + 2 * scaled<coord_t>(GroundTolMm));
             for (const ExPolygon &X : ug) {
-                // The material X stands on: the lowest known tree among the touching pieces of UG_{n−1}.
+                // The material X stands on: the lowest known start among the touching pieces of UG_{n−1}.
                 int32_t tag = -1;
                 if (ug_prev.size() == 1)
                     tag = ug_prev.front().first;
@@ -366,7 +371,7 @@ void LayerEvaluator::Impl::begin_layer(uint32_t n)
                 for (const FrontGeom &f : lg.fronts)
                     if (std::find(f.slices.begin(), f.slices.end(), int(i)) != f.slices.end())
                         append(own_fronts, to_polygons(f.C));
-                const int32_t tag = i < lg.slice_tree.size() ? lg.slice_tree[i] : -1;
+                const int32_t tag = i < lg.slice_start.size() ? lg.slice_start[i] : -1;   // a bad slice is a start
                 append_ex(acc[tag], own_fronts.empty() ? ExPolygons{ L[i] } : diff_ex(L[i], own_fronts));
             }
     for (auto &[tag, area] : acc)
@@ -442,9 +447,11 @@ std::shared_ptr<const ClusterOut> LayerEvaluator::Impl::eval_cluster(uint32_t n,
         if (fo.grounded && ! Fcov.empty() && removed_bb.overlap(front.bbox))
             fo.zero = intersection_ex(ExPolygons{ front.C }, Fcov);
         if (! fo.grounded && ! w.cprime.empty()) {
+            // A front of an island start belongs to it; any other one to the ungrounded material it hangs from, so a
+            // tree with several starts folds per start (theory §3.1).
             for (int s : front.slices)
-                if (s >= 0 && size_t(s) < lg.slice_tree.size() && lg.slice_tree[size_t(s)] >= 0) {
-                    fo.tag = lg.slice_tree[size_t(s)];
+                if (s >= 0 && size_t(s) < lg.slice_start.size() && lg.slice_start[size_t(s)] >= 0) {
+                    fo.tag = lg.slice_start[size_t(s)];
                     break;
                 }
             if (fo.tag < 0)
@@ -720,13 +727,13 @@ void LayerEvaluator::Impl::assemble(uint32_t n, const std::vector<std::pair<ExPo
     const LayerGeom  &lg = base.layers[n];
     const ExPolygons &F  = contact->all;
     LayerNeeds        out;
-    Tagged            island_src;
+    Tagged            src_tags;          // (start, C') of the non-grounded fronts
     for (const ClusterSlot &slot : slots) {
         const ClusterOut &co = *slot.cur;
         for (int c = 0; c < 3; ++ c)
             for (int l = 0; l < 3; ++ l)
                 append_ex(out.need[c][l], co.need[c][l]);
-        island_src.insert(island_src.end(), co.island_src.begin(), co.island_src.end());
+        src_tags.insert(src_tags.end(), co.island_src.begin(), co.island_src.end());
         append_ex(out.cprime, co.cprime);
         out.cuts.insert(out.cuts.end(), co.cuts.begin(), co.cuts.end());
         out.stats.max_c = std::max(out.stats.max_c, co.max_c);
@@ -794,22 +801,22 @@ void LayerEvaluator::Impl::assemble(uint32_t n, const std::vector<std::pair<ExPo
         }
     }
 
-    // Folding (theory §3.1 "Unplaced islands"): island needs hanging from an unplaced tree become one entry per tree.
-    // Component-wise (the noise filter moved the boundaries slightly): a need component belongs to the unplaced tree
+    // Folding (theory §3.1 "Unplaced islands"): island needs hanging from an unplaced start become one entry per start.
+    // Component-wise (the noise filter moved the boundaries slightly): a need component belongs to the unplaced start
     // whose region covers most of it, if that is at least half of it.
     if (std::any_of(unplaced.begin(), unplaced.end(), [](uint8_t u) { return u != 0; })) {
         std::map<int32_t, Polygons> regions;
         auto is_unplaced = [this](int32_t t) { return t >= 0 && size_t(t) < unplaced.size() && unplaced[size_t(t)] != 0; };
-        for (const auto &[tag, area] : island_src)
+        for (const auto &[tag, area] : src_tags)
             if (is_unplaced(tag))
                 append(regions[tag], to_polygons(area));
-        for (const auto &[tree, area] : lg.tail_needs)
-            if (is_unplaced(tree))
-                append(regions[tree], to_polygons(area));
+        for (const auto &[start, area] : lg.tail_starts)
+            if (is_unplaced(start))
+                append(regions[start], to_polygons(area));
         if (! regions.empty()) {
             std::vector<std::pair<int32_t, BoundingBox>> region_bb;
-            for (const auto &[tree, region] : regions)
-                region_bb.emplace_back(tree, get_extents(region));
+            for (const auto &[start, region] : regions)
+                region_bb.emplace_back(start, get_extents(region));
             std::map<int32_t, ExPolygons> folded;
             for (int l = 0; l < 3; ++ l) {
                 ExPolygons &src = out.need[int(Cause::Island)][l];
@@ -818,11 +825,11 @@ void LayerEvaluator::Impl::assemble(uint32_t n, const std::vector<std::pair<ExPo
                     const BoundingBox xb   = get_extents(X.contour);
                     int32_t           best = -1;
                     double            best_area = 0.;
-                    for (const auto &[tree, rb] : region_bb)
+                    for (const auto &[start, rb] : region_bb)
                         if (rb.overlap(xb))
-                            if (const double a = area(intersection(ExPolygons{ X }, regions[tree])); a > best_area) {
+                            if (const double a = area(intersection(ExPolygons{ X }, regions[start])); a > best_area) {
                                 best_area = a;
-                                best      = tree;
+                                best      = start;
                             }
                     if (best >= 0 && best_area >= 0.5 * X.area())
                         folded[best].push_back(std::move(X));
@@ -831,8 +838,8 @@ void LayerEvaluator::Impl::assemble(uint32_t n, const std::vector<std::pair<ExPo
                 }
                 src = std::move(keep);
             }
-            for (auto &[tree, area] : folded)
-                out.folded.emplace_back(tree, union_ex(area));
+            for (auto &[start, area] : folded)
+                out.folded.emplace_back(start, union_ex(area));
         }
     }
 
@@ -859,7 +866,8 @@ void LayerEvaluator::Impl::assemble(uint32_t n, const std::vector<std::pair<ExPo
     for (int c = 0; c < 3; ++ c)
         for (int l = 0; l < 3; ++ l)
             out.stats.need_area[c][l] = float(area_mm2(area(out.need[c][l])));
-    needs = std::move(out);
+    needs      = std::move(out);
+    island_src = std::move(src_tags);
 }
 
 // UG_n = (ungrounded S ∪ C of the non-grounded fronts ∪ T_n) − (L ∩ F⁺) (plan §3.8), tagged; carry push of all fronts.
@@ -906,7 +914,7 @@ void LayerEvaluator::Impl::commit(uint32_t n)
         for (size_t i = 0; i < lg.in->lslices.size(); ++ i)
             if (const int32_t t = i < lg.slice_tree.size() ? lg.slice_tree[i] : -1;
                 t >= 0 && size_t(t) < base.trees.size() && base.trees[size_t(t)].tolerated)
-                ug[t].push_back(lg.in->lslices[i]);
+                ug[i < lg.slice_start.size() && lg.slice_start[i] >= 0 ? lg.slice_start[i] : tree_start[size_t(t)]].push_back(lg.in->lslices[i]);
 
     const ExPolygons &F = contact->all;
     ug_prev.clear();
@@ -928,6 +936,7 @@ void LayerEvaluator::Impl::commit(uint32_t n)
     contact.reset();
     ugs.clear();
     ugs_tagged.clear();
+    island_src.clear();
 }
 
 LayerEvaluator::LayerEvaluator(const AnalysisInput &in, const BaseModel &base, const Reachability &reach, const ThrowOnCancel &cancel) :
@@ -943,10 +952,47 @@ const LayerNeeds &LayerEvaluator::evaluate(uint32_t n, const ExPolygons &E, cons
 
 void LayerEvaluator::commit(uint32_t n) { m_impl->commit(n); }
 
+std::vector<int32_t> LayerEvaluator::mark_unplaced(const ExPolygons &island_pieces)
+{
+    Impl                &impl = *m_impl;
+    std::vector<int32_t> out;
+    if (island_pieces.empty() || impl.cur_n < 0 || size_t(impl.cur_n) >= impl.base.layers.size())
+        return out;
+    // Source regions of the starts at this layer: C' of their non-grounded fronts and their tail zones.
+    std::map<int32_t, Polygons> regions;
+    for (const auto &[tag, area] : impl.island_src)
+        if (tag >= 0 && size_t(tag) < impl.unplaced.size())
+            append(regions[tag], to_polygons(area));
+    for (const auto &[start, area] : impl.base.layers[size_t(impl.cur_n)].tail_starts)
+        if (start >= 0 && size_t(start) < impl.unplaced.size())
+            append(regions[start], to_polygons(area));
+    std::vector<std::pair<int32_t, BoundingBox>> region_bb;
+    for (const auto &[start, region] : regions)
+        region_bb.emplace_back(start, get_extents(region));
+    for (const ExPolygon &piece : island_pieces) {
+        const BoundingBox pb   = get_extents(piece.contour);
+        int32_t           best = -1;
+        double            best_area = 0.;
+        for (const auto &[start, rb] : region_bb)
+            if (rb.overlap(pb))
+                if (const double a = area(intersection(ExPolygons{ piece }, regions[start])); a > best_area) {
+                    best_area = a;
+                    best      = start;
+                }
+        if (best >= 0 && ! impl.unplaced[size_t(best)]) {
+            impl.unplaced[size_t(best)] = 1;
+            out.push_back(best);
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 void LayerEvaluator::mark_tree_unplaced(int32_t tree)
 {
-    if (tree >= 0 && size_t(tree) < m_impl->unplaced.size())
-        m_impl->unplaced[size_t(tree)] = 1;
+    for (const IslandStart &start : m_impl->base.starts)
+        if (start.tree == tree && start.id >= 0 && size_t(start.id) < m_impl->unplaced.size())
+            m_impl->unplaced[size_t(start.id)] = 1;
 }
 
 PassResult evaluate_pass(const AnalysisInput &in, const BaseModel &base, Reachability &reach,

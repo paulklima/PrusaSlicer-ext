@@ -12,6 +12,7 @@
 // evaluator WP2c1a (SmartSupportsEval.cpp), plan WP2c1b (SmartSupportsPlan.cpp, SmartSupports.cpp),
 // paint WP1b (SmartSupportsPaint.cpp).
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -42,6 +43,14 @@ namespace Slic3r::SmartSupports {
 // the slicer loses.
 Polygons offset_keep_thin(const ExPolygons &src, float delta, ClipperLib::JoinType join = DefaultJoinType,
                           double limit = DefaultMiterLimit);
+
+// First object layer whose overhangs can get tree-support tips: Reachability::tips_possible(n) ⇔ n ≥ this (and
+// n < layers). tip_layer(n) = n + raft − (z_top + 1) ≥ max(raft − (z_top + 1), 1)  ⇔  n ≥ max(0, z_top + 2 − raft).
+// Below it the slicer places no support at all; Phase A2 lets slices there rest on the plate (theory §3.1).
+inline uint32_t first_tip_layer(const Params &p)
+{
+    return uint32_t(std::max(0, std::max(0, p.z_top_layers) + 2 - std::max(0, p.raft_support_layers)));
+}
 
 // ===== Projection (WP1a). Result size = in.layers.size(); stub: all empty.
 // Projects the facets of each volume whose state passes filter onto the layers, like
@@ -84,15 +93,22 @@ struct LayerGeom {
     ExPolygons unprintable;               // L − opening(L, ¼·ext_w) (small)
     std::vector<uint8_t> slice_bad;       // per slice: weak contact (§3.5), size lslices.size()
     std::vector<int32_t> slice_tree;      // per slice: IslandTree::id or −1 (grounded), size lslices.size()
+    std::vector<int32_t> slice_start;     // per slice: IslandStart::id or −1, size lslices.size()
     ExPolygons tolerated;                 // T_n
     std::vector<std::pair<int32_t, ExPolygons>> tail_needs;   // per tree (component-wise, w = 0)
+    std::vector<std::pair<int32_t, ExPolygons>> tail_starts;  // the same pieces per IslandStart::id of their branch root
     ExPolygons manual_enf, manual_blk;    // project_states(1 / 2)[n] ∪ slice_modifiers(enf / blk)[n]
 };
 struct IslandTree { int32_t id = -1; uint32_t first = 0, merge = UINT32_MAX; double volume_mm3 = 0; bool tolerated = false;
                     uint32_t tail_last = 0; bool tail_without_downward = false; };   // merge = UINT32_MAX: never
+// A slice of an island tree without (strong) contact below (slice_bad): a new source of ungrounded material. The
+// material hanging from it carries its id; an unplaced island folds only what hangs from its own start, never the
+// other starts of the same tree (theory §3.1). Every tree root is a start; a weak-contact slice on a tree is one too.
+struct IslandStart { int32_t id = -1; uint32_t layer = 0; int32_t slice = -1; int32_t tree = -1; };
 struct BaseModel {
     std::vector<LayerGeom> layers;        // size layers
     std::vector<IslandTree> trees;        // indexed by IslandTree::id
+    std::vector<IslandStart> starts;      // indexed by IslandStart::id, bottom up (layer, slice)
     uint32_t last_layer_with_fronts = 0;  // max n with fronts, tails or manual enforcers
 };
 BaseModel build_base_model(const AnalysisInput &, const ThrowOnCancel &, const ProgressFn &);   // parallel inside
@@ -227,7 +243,7 @@ FrontNeeds classify_front(const ExPolygons &cprime, const ReachQuery &, const Te
 // ===== Evaluator (WP2c1a), plan §3.8. Stub: evaluate returns empty needs; commit no-op; evaluate_pass empty.
 struct LayerNeeds {
     ExPolygons need[3][3];                                // [cause][level] after tail, overrides, filter, folding
-    std::vector<std::pair<int32_t, ExPolygons>> folded;   // per unplaced island tree
+    std::vector<std::pair<int32_t, ExPolygons>> folded;   // per unplaced island start (IslandStart::id), sorted by id
     std::vector<std::pair<ExPolygons, Why>> why;          // pieces with a known blocking reason (InterfaceGap, NoTipLayer)
     ExPolygons cprime;                                    // ∪ C' (for widening)
     std::vector<TensionMap::Cut> cuts;                    // long-span cut candidates
@@ -249,7 +265,11 @@ public:
                                const std::vector<std::pair<ExPolygons, Cause>> &overrides,
                                std::optional<BoundingBox> touched);
     void commit(uint32_t n);                              // UG_n, carry, stats of the last evaluate(n)
-    void mark_tree_unplaced(int32_t tree);                // fold the needs hanging from this island tree
+    // Folds the needs hanging from the island starts of the given pieces of island need of the last evaluate(n) (the
+    // start whose source region - C' of its non-grounded fronts, its tail zones - covers most of a piece); returns the
+    // newly marked start ids, ascending. Pieces without a known start mark nothing.
+    std::vector<int32_t> mark_unplaced(const ExPolygons &island_pieces);
+    void mark_tree_unplaced(int32_t tree);                // all starts of the tree (tests)
 
 private:
     struct Impl;
@@ -266,7 +286,7 @@ struct Need { Cause cause = Cause::Island; Level level = Level::Must; Why why = 
               ExPolygons area; ReportState reason = ReportState::Unplaceable; };
 struct Plan {
     std::vector<Placement> placements;
-    std::vector<Need> residual;            // EVERYTHING to report: incl. folded trees, tails without downward
+    std::vector<Need> residual;            // EVERYTHING to report: incl. folded islands, tails without downward
                                            // facets (area ∅), PartlyOnModel / MayMerge flags (WP2c1b fills)
     std::vector<LayerStats> stats;         // size layers
     std::vector<ExPolygons> zones_paintable;   // size layers; areas this run paints (paintable && cause checked)

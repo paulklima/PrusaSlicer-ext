@@ -330,7 +330,7 @@ TEST_CASE("Cone tail: tail needs exist and vanish with the tail painted", "[Smar
     CHECK(painted_island <= 0.05 * bare_island);
 }
 
-TEST_CASE("Islands: a floating sphere is one island; unplaced trees fold", "[SmartSupports][sas-eval]")
+TEST_CASE("Islands: a floating sphere is one island; unplaced islands fold", "[SmartSupports][sas-eval]")
 {
     // A sphere R 5 floating 5 mm above the bed next to a base block.
     const SasPrint &sp = cached_print("floating_sphere", [] {
@@ -339,7 +339,9 @@ TEST_CASE("Islands: a floating sphere is one island; unplaced trees fold", "[Sma
     const AnalysisInput in   = input_of(sp);
     const BaseModel     base = build_base_model(in, {}, {});
     REQUIRE(base.trees.size() == 1);
+    REQUIRE(base.starts.size() == 1);                // folding is per island start (theory §3.1, host test 1)
     const IslandTree &tree  = base.trees.front();
+    const int32_t     start = base.starts.front().id;
     const uint32_t    first = tree.first;
     const uint32_t    upto  = first + 10;          // 2 mm of the lower hemisphere: fronts on every layer
     REQUIRE(upto < in.layers.size());
@@ -363,7 +365,7 @@ TEST_CASE("Islands: a floating sphere is one island; unplaced trees fold", "[Sma
         const LayerNeeds &again = folding.evaluate(first, {}, {}, std::nullopt);
         CHECK(need_area(again, Cause::Island) == 0.);
         REQUIRE(again.folded.size() == 1);
-        CHECK(again.folded.front().first == tree.id);
+        CHECK(again.folded.front().first == start);
         CHECK(mm2(again.folded.front().second) == Approx(need_area(at_first, Cause::Island)).epsilon(1e-6));
     }
     folding.commit(first);
@@ -381,7 +383,7 @@ TEST_CASE("Islands: a floating sphere is one island; unplaced trees fold", "[Sma
         CHECK(need_area(b, Cause::Island) == 0.);
         double fb = 0.;
         for (const auto &[t, area] : b.folded) {
-            CHECK(t == tree.id);
+            CHECK(t == start);
             fb += mm2(area);
         }
         CHECK(fb == Approx(need_area(a, Cause::Island)).epsilon(1e-6));

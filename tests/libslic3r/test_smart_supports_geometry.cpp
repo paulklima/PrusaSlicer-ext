@@ -489,3 +489,22 @@ TEST_CASE("Phase A is deterministic and cancellable", "[SmartSupports][sas-geome
     std::atomic<int> calls { 0 };
     CHECK_THROWS_AS(build_base_model(in, [&calls] { if (++ calls > 3) throw CanceledException(); }, [](int) {}), CanceledException);
 }
+
+TEST_CASE("first_tip_layer() is the first layer of Reachability::tips_possible()", "[SmartSupports][sas-geometry]")
+{
+    // Phase A2 lets slices below it rest on the plate (host test 1); it must agree with the slicer mirror for any
+    // top contact gap and raft: tip_layer(n) = n + raft − (z_top + 1) ≥ max(raft − (z_top + 1), 1).
+    for (int z_top : { 0, 1, 2, 3 })
+        for (int raft : { 0, 1, 2, 3, 5, 8 }) {
+            AnalysisInput in;
+            in.layers.resize(12);
+            in.params.z_top_layers        = z_top;
+            in.params.raft_support_layers = raft;
+            const Reachability reach(in);
+            const uint32_t     first = first_tip_layer(in.params);
+            for (uint32_t n = 0; n < 12; ++ n) {
+                CHECK(reach.tips_possible(n) == (reach.tip_layer(n) >= std::max(raft - (z_top + 1), 1)));
+                CHECK(reach.tips_possible(n) == (n >= first));
+            }
+        }
+}

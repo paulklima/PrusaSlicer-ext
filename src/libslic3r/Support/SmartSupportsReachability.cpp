@@ -126,8 +126,8 @@ struct Reachability::Impl
     const ExPolygons* slices(int s) const
         { return s >= num_raft && s < num_layers ? &in.layers[size_t(s - num_raft)].lslices : nullptr; }
     int  tip_layer(uint32_t n) const { return int(n) + num_raft - (z_top + 1); }
-    bool tips_possible(uint32_t n) const
-        { return n < in.layers.size() && tip_layer(n) >= std::max(num_raft - (z_top + 1), 1); }
+    // tip_layer(n) ≥ max(num_raft − (z_top + 1), 1), the first support layer with tips (shared with Phase A2).
+    bool tips_possible(uint32_t n) const { return n < in.layers.size() && n >= first_tip_layer(in.params); }
     // xy distance of the collision with the i-th layer above (TreeModelVolumes.cpp:521-522).
     coord_t range_above(int i) const { return coord_t(xy_min - (i - (z_top == 1 ? 0.5 : 0)) * xy_min / z_top); }
     BoundingBox window_of(const ExPolygons &E) const { return get_extents(E).inflated(window_margin); }
