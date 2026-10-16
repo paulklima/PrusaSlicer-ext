@@ -67,11 +67,13 @@ for b in "${skip[@]}" "${rework[@]}"; do has "refs/heads/$b" || die "no branch '
 for b in "${rework[@]}"; do inlist "$b" "${skip[@]}" && die "'$b' is both --skip and --rework"; done
 
 # --- classify feature/* and fix/* ---
-todo=(); done_=(); other=()
+todo=(); done_=(); other=(); relbased=()
 while read -r b; do
     [[ "$b" =~ -[0-9]+\.[0-9]+\.[0-9]+$ ]] && { other+=("$b(old-line fix)"); continue; }
     inlist "$b" "${skip[@]}" && continue
     if anc "$newc" "refs/heads/$b"; then done_+=("$b")
+    # started from a release of the old line: only its own commits move (doc/FORK-WORKFLOW.md)
+    elif rel=$(g describe --tags --abbrev=0 --match "v$oldver+*-v*" "refs/heads/$b" 2>/dev/null); then relbased+=("$b($rel)")
     elif anc "$oldc" "refs/heads/$b"; then todo+=("$b")
     else other+=("$b"); fi
 done < <(g for-each-ref --format='%(refname:short)' refs/heads/feature/ refs/heads/fix/)
@@ -124,6 +126,7 @@ report() {
     [ ${#done_[@]} -gt 0 ] && say "Already on $new: ${done_[*]}"
     [ ${#skip[@]} -gt 0 ] && say "Skipped (dropped for $newver): ${skip[*]}"
     [ ${#other[@]} -gt 0 ] && say "Ignored (other base): ${other[*]}"
+    [ ${#relbased[@]} -gt 0 ] && say "Release-based, port by hand first (git rebase --onto $new <release tag> <branch>): ${relbased[*]}"
     say "Merge order for dev/$newver: ${order[*]:-none}"
 }
 
@@ -198,6 +201,7 @@ merge)
     clean_or_die
     report
     for b in "${todo[@]}"; do inlist "$b" "${order[@]}" && die "$b is still on $old - run 'git fork-bump rebase $new' first"; done
+    [ ${#relbased[@]} -eq 0 ] || die "release-based branches not ported yet: ${relbased[*]} - git rebase --onto $new <release tag> <branch> (or --skip them)"
     dev="dev/$newver"; fork="fork/$newver"
     if has "refs/heads/$dev"; then
         anc "$newc" "refs/heads/$dev" || die "$dev exists but is not based on $new"
