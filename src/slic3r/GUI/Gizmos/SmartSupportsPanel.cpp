@@ -42,6 +42,7 @@
 #include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmosCommon.hpp"
+#include "slic3r/GUI/Gizmos/SmartSupportsWait.hpp"
 #include "slic3r/GUI/Jobs/Worker.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 
@@ -54,8 +55,6 @@ using Clock = std::chrono::steady_clock;
 
 constexpr const char *Section        = "smart_auto_supports";
 constexpr auto        PollPeriod     = std::chrono::milliseconds(500);
-constexpr auto        WaitTimeout    = std::chrono::minutes(15);
-constexpr auto        ResliceRetry   = std::chrono::seconds(1);
 constexpr int         PollFrameMs    = 100;
 constexpr int         MaxVisibleRows = 10;
 
@@ -195,7 +194,7 @@ std::string state_text(const SS::ReportEntry &e, size_t analysed_instance)
     case RS::LongSpanNotPainted:        return _u8L("Long bridge, not painted in this version");
     case RS::CauseDisabled:             return e.cause == SS::Cause::Island ? _u8L("Islands not painted (unchecked)") :
                                                                               _u8L("Overhangs not painted (unchecked)");
-    case RS::ReliesOnDisabledCauses:    return _u8L("Painted areas assume the unchecked ones are supported");
+    case RS::ReliesOnDisabledCauses:    return _u8L("Painted areas rely on unpainted planned support (unchecked causes, long bridges)");
     case RS::TailWithoutDownwardFacets: return _u8L("Thin hanging part without downward faces");
     case RS::SeveralPrintObjects:       return format(_u8L("Computed for instance %1% only"), analysed_instance + 1);
     case RS::OtherObjectsNotConsidered: return _u8L("Other objects on the plate are not considered");
@@ -443,13 +442,11 @@ void SmartSupportsPanel::load_settings()
     m_section_open = get_bool("section_open", false);
     m_up.paint_causes = uint8_t((get_bool("cause_islands", true) ? SS::cbIsland : 0) |
                                 (get_bool("cause_overhangs", true) ? SS::cbCantilever : 0));
-    if (cfg.has(Section, "overhang_angle"))
+    // First value of α: the effective support_material_threshold (D5), derived and persisted when the section is
+    // opened. Users who never open it pay neither the config lookup nor an AppConfig write (review C m7).
+    m_alpha_pending = ! cfg.has(Section, "overhang_angle");
+    if (! m_alpha_pending)
         m_up.alpha_deg = int(std::lround(get_double("overhang_angle", 0., 0., 89.)));
-    else {
-        // First value: the effective support_material_threshold (D5); persisted from now on.
-        update_effective_config(true);
-        m_up.alpha_deg = m_eff.valid ? std::clamp(m_eff.object.support_material_threshold.value, 0, 89) : 0;
-    }
     m_up.K_max             = get_double("k_max",  def.K_max,  0.5, 20.);
     m_up.B_max             = get_double("b_max",  def.B_max,  5., 200.);
     m_up.B_ceil            = get_double("b_ceil", def.B_ceil, 0., 200.);
@@ -458,11 +455,25 @@ void SmartSupportsPanel::load_settings()
     m_up.beta_deg          = get_double("beta", def.beta_deg, 1., 89.);
     m_up.plate_policy      = cfg.get(Section, "plate_policy") == "plate_only" ? SS::PlatePolicy::PlateOnly : SS::PlatePolicy::PreferPlate;
     m_up.lowest_level      = cfg.get(Section, "level") == "critical" ? SS::Level::Must : SS::Level::Should;
+}
+
+// First opening of the section: α starts from the effective support_material_threshold (D5), persisted from now on.
+void SmartSupportsPanel::ensure_alpha()
+{
+    if (! m_alpha_pending)
+        return;
+    update_effective_config(true);
+    if (! m_eff.valid)
+        return;                                    // no object yet: next time
+    m_up.alpha_deg  = std::clamp(m_eff.object.support_material_threshold.value, 0, 89);
+    m_alpha_pending = false;
     save_settings();
 }
 
 void SmartSupportsPanel::save_settings() const
 {
+    if (m_alpha_pending)
+        return;   // nothing chosen yet; the section has never been opened
     AppConfig &cfg = *wxGetApp().app_config;
     cfg.set(Section, "section_open",      m_section_open ? "1" : "0");
     cfg.set(Section, "cause_islands",     (m_up.paint_causes & SS::cbIsland) ? "1" : "0");
@@ -482,7 +493,8 @@ void SmartSupportsPanel::reset_to_defaults()
 {
     m_up = SS::UserParams{};
     update_effective_config(true);
-    m_up.alpha_deg = m_eff.valid ? std::clamp(m_eff.object.support_material_threshold.value, 0, 89) : 0;
+    m_up.alpha_deg  = m_eff.valid ? std::clamp(m_eff.object.support_material_threshold.value, 0, 89) : 0;
+    m_alpha_pending = false;
     save_settings();
 }
 
@@ -591,7 +603,8 @@ void SmartSupportsPanel::defer(std::function<void(SmartSupportsPanel &)> fn)
 {
     std::weak_ptr<int> alive = m_alive;
     wxGetApp().CallAfter([this, alive, fn = std::move(fn)]() {
-        if (alive.lock())
+        // At shutdown the plater is gone before the deferred calls run (review C m1).
+        if (alive.lock() && wxGetApp().plater() != nullptr)
             fn(*this);
     });
 }
@@ -638,6 +651,9 @@ bool SmartSupportsPanel::can_start(std::string *why_not) const
         return fail(_u8L("Painting where needed is running."));
     if (! wxGetApp().plater()->get_ui_job_worker().is_idle())
         return fail(_u8L("Another background task is running."));
+    // Its backend result would overwrite the smart paint, our reslice would replace its task (review C m3).
+    if (m_host.stock_autopaint_pending())
+        return fail(_u8L("Automatic painting is still running."));
     if (m_poll.valid && ! m_poll.printable)
         return fail(_u8L("The object has no printable instance."));
     return true;
@@ -692,10 +708,17 @@ void SmartSupportsPanel::start_run()
     m_state             = State::WaitingForSlices;
     m_wait_start        = Clock::now();
     m_reslice_requested = false;
+    m_idle_reslices     = 0;
     m_message.clear();
     m_selected_entry.reset();
+    request_reslice();
+    m_host.request_redraw(PollFrameMs);
+}
 
-    // D33: reslice outside of rendering; Print::apply runs synchronously inside reslice_FFF_until_step().
+// D33: reslice outside of rendering; Print::apply runs synchronously inside reslice_FFF_until_step().
+void SmartSupportsPanel::request_reslice()
+{
+    m_reslice_requested = false;
     const uint64_t run_id = m_run_id;
     defer([run_id](SmartSupportsPanel &p) {
         if (p.m_run_id != run_id || p.m_state != State::WaitingForSlices)
@@ -717,7 +740,6 @@ void SmartSupportsPanel::start_run()
         p.m_last_reslice      = Clock::now();
         p.m_host.request_redraw(PollFrameMs);
     });
-    m_host.request_redraw(PollFrameMs);
 }
 
 void SmartSupportsPanel::poll_waiting()
@@ -727,47 +749,64 @@ void SmartSupportsPanel::poll_waiting()
         cancel_run();
         return;
     }
-    const Clock::time_point now = Clock::now();
-    if (now - m_wait_start > WaitTimeout) {
+    namespace W = SmartSupportsWait;
+    using Seconds = std::chrono::duration<double>;
+    const Clock::time_point now    = Clock::now();
+    Plater                 *plater = wxGetApp().plater();
+    W::Observation          o;
+    o.since_start_s    = Seconds(now - m_wait_start).count();
+    o.resliced         = m_reslice_requested;
+    o.since_reslice_s  = m_reslice_requested ? Seconds(now - m_last_reslice).count() : 0.;
+    o.update_scheduled = plater->is_background_process_update_scheduled();
+    o.idle_reslices    = m_idle_reslices;
+    o.worker_idle      = plater->get_ui_job_worker().is_idle();
+    const PrintStatus status = s_print_statuses[s_multiple_beds.get_active_bed()];
+    o.slicing_running  = status == PrintStatus::running;
+    o.slicing_failed   = ! is_sliceable(status);
+    // Re-resolve the print and the PrintObject on every poll; never cache them (Print::apply may delete them).
+    SS::PrintObjectChoice choice;
+    if (o.resliced && ! o.update_scheduled) {
+        const Print &print = plater->active_fff_print();
+        const bool   bg    = wxGetApp().app_config->get_bool("background_processing");
+        choice       = SS::choose_print_object(print, *mo, size_t(std::max(0, m_host.selected_instance())), bg);
+        o.po_found   = choice.po != nullptr;
+        o.ready      = o.po_found && choice.ready;
+        o.consistent = o.ready && SS::input_consistent(*choice.po, *mo, choice.analysed_instance);
+    }
+
+    switch (W::decide(o)) {
+    case W::Action::Wait:
+        return;
+    case W::Action::StartJob:
+        start_job(*choice.po, *mo, choice.analysed_instance);
+        return;
+    case W::Action::Reslice:
+        // The model was edited after the reslice: slice again.
+        request_reslice();
+        return;
+    case W::Action::ResliceIdle:
+        ++ m_idle_reslices;
+        request_reslice();
+        return;
+    case W::Action::FailTimeout:
         cancel_run();
         set_failed(_u8L("Timed out while waiting for the slices."));
         return;
-    }
-    if (! m_reslice_requested)
-        return;
-
-    // Re-resolve the print and the PrintObject on every poll; never cache them (Print::apply may delete them).
-    Plater                     *plater = wxGetApp().plater();
-    const Print                &print  = plater->active_fff_print();
-    const bool                  bg     = wxGetApp().app_config->get_bool("background_processing");
-    const SS::PrintObjectChoice choice = SS::choose_print_object(print, *mo, size_t(std::max(0, m_host.selected_instance())), bg);
-    if (choice.po == nullptr) {
+    case W::Action::FailNotInPrint:
         cancel_run();
         set_failed(choice.why_null == SS::PrintObjectChoice::Null::NoPrintableInstance ?
                        _u8L("The object has no printable instance.") :
                        _u8L("The object is not part of the print (is it outside of the bed?)."));
         return;
-    }
-    if (! choice.ready)
+    case W::Action::FailSlicing:
+        cancel_run();
+        set_failed(_u8L("Slicing failed, see the slicing notification. Fix it and run again."));
         return;
-    if (! SS::input_consistent(*choice.po, *mo, choice.analysed_instance)) {
-        // The model was edited after the reslice: slice again (throttled).
-        if (now - m_last_reslice > ResliceRetry) {
-            m_reslice_requested = false;
-            const uint64_t run_id = m_run_id;
-            defer([run_id](SmartSupportsPanel &p) {
-                if (p.m_run_id != run_id || p.m_state != State::WaitingForSlices)
-                    return;
-                if (ModelObject *mo = p.m_host.model_object(); mo != nullptr && mo->id() == p.m_run_mo_id) {
-                    wxGetApp().plater()->reslice_FFF_until_step(posSlice, *mo, false);
-                    p.m_reslice_requested = true;
-                    p.m_last_reslice      = Clock::now();
-                }
-            });
-        }
+    case W::Action::FailInterrupted:
+        cancel_run();
+        set_failed(_u8L("Slicing was interrupted (the object or the settings changed). Run again."));
         return;
     }
-    start_job(*choice.po, *mo, choice.analysed_instance);
 }
 
 void SmartSupportsPanel::start_job(const PrintObject &po, ModelObject &mo, size_t analysed_instance)
@@ -783,6 +822,11 @@ void SmartSupportsPanel::start_job(const PrintObject &po, ModelObject &mo, size_
             return;
         }
     }
+
+    // Fingerprint of the settings and the object as analysed (review C M1): finalize discards the result if they changed
+    // meanwhile, and the result is stale later exactly when they differ from this state.
+    update_effective_config(true);
+    const uint64_t fp_start = m_eff.valid ? SS::config_fingerprint(m_eff.full, mo, analysed_instance, input->params.user) : 0;
 
     auto result = std::make_shared<SS::Result>();
     m_job       = std::make_shared<JobShared>();
@@ -819,13 +863,14 @@ void SmartSupportsPanel::start_job(const PrintObject &po, ModelObject &mo, size_
                          SS::run(*input, SS::RunOptions{}, is_canceled, progress);
     };
     // UI thread.
-    auto finalize = [this, alive, run_id, input, result](bool canceled, std::exception_ptr &eptr) {
-        if (! alive.lock()) {
-            // The gizmo is gone (e.g. application shutdown): nothing to apply, no Plater access.
+    auto finalize = [this, alive, run_id, input, result, fp_start](bool canceled, std::exception_ptr &eptr) {
+        if (! alive.lock() || wxGetApp().plater() == nullptr) {
+            // The gizmo or the plater is gone (application shutdown: ~BoostThreadWorker delivers the finalize after
+            // MainFrame::shutdown() cleared the plater, review C m1): nothing to apply, no Plater access.
             eptr = nullptr;
             return;
         }
-        this->finalize_job(run_id, canceled, eptr, input, result);
+        this->finalize_job(run_id, canceled, eptr, input, result, fp_start);
     };
 
     if (! queue_job(wxGetApp().plater()->get_ui_job_worker(), std::move(process), std::move(finalize))) {
@@ -839,7 +884,7 @@ void SmartSupportsPanel::start_job(const PrintObject &po, ModelObject &mo, size_
 
 void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::exception_ptr &eptr,
                                       const std::shared_ptr<const SS::AnalysisInput> &input,
-                                      const std::shared_ptr<SS::Result> &result)
+                                      const std::shared_ptr<SS::Result> &result, uint64_t fp_start)
 {
     if (run_id != m_run_id || m_state != State::Analysing) {
         // Superseded or cancelled by the panel.
@@ -888,6 +933,15 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
         m_host.request_redraw();
         return;
     }
+    // Settings, instance orientation, z offset or volume matrices changed meanwhile (an undo of "Fix…", a sidebar edit, a
+    // rotation): the fingerprint covers them all (review C M1).
+    update_effective_config(true);
+    if (! m_eff.valid || SS::config_fingerprint(m_eff.full, *mo, input->analysed_instance_idx, input->params.user) != fp_start) {
+        m_state   = State::Idle;
+        m_message = _u8L("The settings or the object's placement changed during the analysis; the result was discarded. Run again.");
+        m_host.request_redraw();
+        return;
+    }
 
     bool changed = false;
     for (size_t i = 0; i < result->paint.size(); ++ i)
@@ -917,9 +971,8 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
     for (const SS::ContractIssue &ci : input->contract)
         if (ci.key == SS::ContractIssue::Raft || ci.key == SS::ContractIssue::ReachBelowTipSpacing)
             lr.advisory.emplace_back(ci);
-    lr.fake = m_run_fake;
-    update_effective_config(true);
-    lr.config_fp = SS::config_fingerprint(m_eff.full, *mo, lr.analysed_instance, lr.user);
+    lr.fake      = m_run_fake;
+    lr.config_fp = fp_start;
     m_last_runs[mo->id().id] = std::move(lr);
 
     m_selected_entry.reset();
@@ -931,12 +984,10 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
 
 void SmartSupportsPanel::cancel_run()
 {
+    // The job polls the flag (is_canceled) and ends by itself. No Worker::cancel(): between reading our running flag and
+    // the call, our job may end and a foreign job start, which would be cancelled instead (review C m2).
     if (m_cancel_flag)
         m_cancel_flag->store(true);
-    // Cancel the shared worker only while our own job runs on it (plan §2.3).
-    if (m_state == State::Analysing && m_job && m_job->running.load())
-        if (Plater *plater = wxGetApp().plater(); plater != nullptr)
-            plater->get_ui_job_worker().cancel();
     ++ m_run_id;   // a late finalize of the cancelled job is ignored
     m_job.reset();
     m_cancel_flag.reset();
@@ -950,11 +1001,22 @@ void SmartSupportsPanel::remove_smart_paint()
     ModelObject *mo = m_host.model_object();
     if (mo == nullptr || busy())
         return;
-    for (std::unique_ptr<TriangleSelectorGUI> &sel : m_host.selectors()) {
-        sel->remap_states(SS::clear_causes_map(SS::cbAll));
-        sel->request_update_render_data();
-    }
-    m_host.commit_paint(_L("Remove smart paint"));
+    // The button state may be up to one poll old: no undo step that changes nothing (review C m5).
+    auto has_smart = [](const TriangleSelectorGUI &sel) {
+        for (uint8_t mask = 1; mask <= SS::cbAll; ++ mask)
+            if (sel.has_facets(SS::auto_state(mask)))
+                return true;
+        return false;
+    };
+    bool any = false;
+    for (std::unique_ptr<TriangleSelectorGUI> &sel : m_host.selectors())
+        if (has_smart(*sel)) {
+            sel->remap_states(SS::clear_causes_map(SS::cbAll));
+            sel->request_update_render_data();
+            any = true;
+        }
+    if (any)
+        m_host.commit_paint(_L("Remove smart paint"));
     m_last_runs.erase(mo->id().id);
     m_selected_entry.reset();
     m_state = State::Idle;
@@ -1104,7 +1166,9 @@ void SmartSupportsPanel::render_entry_line()
     if (ImGuiPureWrap::button(entry_label() + "##sas_entry")) {
         m_section_open      = true;
         m_scroll_to_section = true;
+        ensure_alpha();
         save_settings();
+        poll(true);
         m_host.request_redraw();
     }
     if (ImGui::IsItemHovered())
@@ -1113,6 +1177,8 @@ void SmartSupportsPanel::render_entry_line()
 
 float SmartSupportsPanel::required_width() const
 {
+    if (! m_section_open)
+        return 0.f;          // a closed section is one header line: the stock window width (review C m7)
     const ImGuiStyle &style = ImGui::GetStyle();
     const float frame   = ImGui::GetFrameHeight();
     const float spacing = style.ItemSpacing.x;
@@ -1134,7 +1200,9 @@ void SmartSupportsPanel::render_section(float window_width)
 {
     if (! m_loaded)
         load_settings();
-    tick();
+    // The polling (config lookups, contract, PrintObject choice) only while it is shown or a run needs it (review C m7).
+    if (m_section_open || busy())
+        tick();
 
     ImGuiWrapper     &imgui = *wxGetApp().imgui();
     const ModelObject *mo   = m_host.model_object();
@@ -1152,10 +1220,15 @@ void SmartSupportsPanel::render_section(float window_width)
     }
     if (open != m_section_open) {
         m_section_open = open;
+        if (open)
+            ensure_alpha();
         save_settings();
+        if (open)
+            poll(true);
     }
     if (! open || mo == nullptr)
         return;
+    ensure_alpha();
 
     const float labels_left = label_column_width();
     const float slider_w    = std::max(imgui.scaled(4.f), window_width - labels_left - ImGuiPureWrap::get_slider_icon_size().x);
@@ -1462,11 +1535,13 @@ void SmartSupportsPanel::render_report_window(float x, float y, float bottom_lim
     ImGuiPureWrap::begin(_u8L("Smart support report"), &keep_open,
                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
-    const bool has_marker = m_selected_entry && *m_selected_entry < lr->report.size() &&
-                            lr->report[*m_selected_entry].area_mm2 > 0.;
+    const bool has_row    = m_selected_entry && *m_selected_entry < lr->report.size() && lr->report[*m_selected_entry].area_mm2 > 0.;
+    const bool has_marker = has_row && marker_position(*lr, lr->report[*m_selected_entry]).has_value();
     imgui.disabled_begin(! has_marker);
     if (ImGuiPureWrap::button(_u8L("Clip at this height") + "##sas_clip"))
         clip_at_selected();
+    if (has_row && ! has_marker && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        tooltip(format(_u8L("Computed for instance %1%: select it to see the marker."), lr->analysed_instance + 1));
     imgui.disabled_end();
     ImGui::SameLine();
     ImGuiPureWrap::text_colored(ColGrey, _u8L("Click a row to mark it in the 3D view."));
@@ -1571,9 +1646,20 @@ std::optional<Vec3d> SmartSupportsPanel::marker_position(const LastRun &lr, cons
     const ModelObject *mo = m_host.model_object();
     if (e.area_mm2 <= 0. || mo == nullptr || mo->id() != lr.mo_id || lr.analysed_instance >= mo->instances.size())
         return std::nullopt;
+    // Drawn on the selected instance, the only one InstancesHider shows: valid if it has the analysed instance's
+    // orientation and z offset (same PrintObject frame), else no marker and no clip (review C m4).
+    const int sel = m_host.selected_instance();
+    if (sel < 0 || size_t(sel) >= mo->instances.size())
+        return std::nullopt;
+    const ModelInstance &analysed = *mo->instances[lr.analysed_instance];
+    const ModelInstance &shown    = *mo->instances[size_t(sel)];
+    if (size_t(sel) != lr.analysed_instance &&
+        (! shown.get_matrix_no_offset().isApprox(analysed.get_matrix_no_offset()) ||
+         std::abs(shown.get_offset(Z) - analysed.get_offset(Z)) > EPSILON))
+        return std::nullopt;
     // world = live instance · po_trafo_centered⁻¹ · (p, slice_z)   (plan §3.3)
     const Vec3d p(unscale<double>(e.centroid.x()), unscale<double>(e.centroid.y()), e.slice_z);
-    return Vec3d(mo->instances[lr.analysed_instance]->get_matrix() * (lr.po_trafo_centered.inverse() * p));
+    return Vec3d(shown.get_matrix() * (lr.po_trafo_centered.inverse() * p));
 }
 
 void SmartSupportsPanel::clip_at_selected()

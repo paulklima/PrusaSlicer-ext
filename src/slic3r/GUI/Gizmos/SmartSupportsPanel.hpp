@@ -57,6 +57,8 @@ struct SmartSupportsHost {
     virtual bool is_open() const = 0;
     virtual CommonGizmosDataObjects::ObjectClipper *clipper() = 0;
     virtual GLCanvas3D &canvas() = 0;
+    // The stock "Automatic painting" waits for its backend result (it would overwrite or cancel a smart run).
+    virtual bool stock_autopaint_pending() const = 0;
 };
 
 class SmartSupportsPanel {
@@ -141,6 +143,7 @@ private:
 
     // settings
     void load_settings();
+    void ensure_alpha();
     void save_settings() const;
     void reset_to_defaults();
     bool fake_mode() const;
@@ -158,10 +161,12 @@ private:
     void on_paint_clicked();
     void start_run();
     void poll_waiting();
+    void request_reslice();
     void start_job(const PrintObject &po, ModelObject &mo, size_t analysed_instance);
+    // fp_start: config_fingerprint() of the live object and settings when the input was built.
     void finalize_job(uint64_t run_id, bool canceled, std::exception_ptr &eptr,
                       const std::shared_ptr<const SmartSupports::AnalysisInput> &input,
-                      const std::shared_ptr<SmartSupports::Result> &result);
+                      const std::shared_ptr<SmartSupports::Result> &result, uint64_t fp_start);
     void cancel_run();
     void set_failed(const std::string &message);
     void remove_smart_paint();
@@ -190,6 +195,7 @@ private:
     // settings (AppConfig section "smart_auto_supports", plan §6.8)
     bool                                        m_loaded        = false;
     bool                                        m_section_open  = false;
+    bool                                        m_alpha_pending = false;  // α not stored yet: derived when the section opens
     SmartSupports::UserParams                   m_up;
 
     // UI
@@ -205,6 +211,7 @@ private:
     uint64_t                                    m_run_id = 0;
     ObjectID                                    m_run_mo_id;
     bool                                        m_reslice_requested = false;
+    int                                         m_idle_reslices     = 0;   // reslices because the slicing had stopped
     std::chrono::steady_clock::time_point       m_wait_start;
     std::chrono::steady_clock::time_point       m_last_reslice;
     std::shared_ptr<std::atomic<bool>>          m_cancel_flag;

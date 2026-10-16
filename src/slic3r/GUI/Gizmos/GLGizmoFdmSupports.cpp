@@ -648,10 +648,14 @@ bool GLGizmoFdmSupports::gizmo_event(SLAGizmoEventType action, const Vec2d &mous
     // it still reach the canvas (orbit, pan). The drag and release of a consumed click are consumed as well.
     const bool down = action == SLAGizmoEventType::LeftDown || action == SLAGizmoEventType::RightDown;
     const bool up   = action == SLAGizmoEventType::LeftUp || action == SLAGizmoEventType::RightUp;
-    if (m_smart && m_smart->busy() && down && mouse_over_object(mouse_position)) {
+    const bool busy = m_smart && m_smart->busy();
+    if (busy && down && mouse_over_object(mouse_position)) {
         m_smart_consumed_click = true;
         return true;
     }
+    // A release that never arrived (e.g. focus loss) must not swallow the next normal stroke (review C m6).
+    if (down && ! busy)
+        m_smart_consumed_click = false;
     if (m_smart_consumed_click && (up || action == SLAGizmoEventType::Dragging)) {
         if (up)
             m_smart_consumed_click = false;

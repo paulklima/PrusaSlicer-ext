@@ -83,6 +83,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmoFdmSupports.hpp
     GUI/Gizmos/SmartSupportsPanel.cpp
     GUI/Gizmos/SmartSupportsPanel.hpp
+    GUI/Gizmos/SmartSupportsWait.hpp
     GUI/Gizmos/TriangleSelectorFdmGui.cpp
     GUI/Gizmos/TriangleSelectorFdmGui.hpp
     GUI/Gizmos/GLGizmoFuzzySkin.cpp
