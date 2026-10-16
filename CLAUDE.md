@@ -16,7 +16,9 @@ What the fork adds is **not listed here** — every feature/fix has its own fold
 
 ## Fork workflow rules (binding for agents)
 
-- Work only on `feature/<id>` or `fix/<id>`, based on the upstream tag (`version_X.Y.Z`).
+- Work only on `feature/<id>` or `fix/<id>`, based on the newest release tag of the line
+  (`v<upstream>+ext-v…`, so `make` works on the branch; the upstream tag `version_X.Y.Z` only
+  while the line has no release). Never base a branch on `dev/*`.
   **Ask the user** before creating one (feature or fix? which `<id>`?) and before merging,
   removing or archiving any branch.
 - One feature = one capability with everything it needs (code, docs, tooling, display) —
