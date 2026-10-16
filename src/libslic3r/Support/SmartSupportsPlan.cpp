@@ -42,9 +42,11 @@ constexpr double RowClosingMm   = 0.5;
 constexpr double RowSampleMm    = 0.05;
 // Verification: needs within this distance of a reported plan residual of the same layer are not new, mm (§3.10).
 constexpr double VerifyMarginMm = 0.5;
-// MayMergeOntoModel heuristic: a painted plate placement within branch_diameter + Δz·tan(tree angle) of a painted
-// on-model placement at most this far below it, mm.
+// MayMergeOntoModel heuristic: a painted plate placement within branch_diameter + (2·MergeDescentMm + Δz)·tan(tree angle)
+// of a painted on-model placement at most MergeHeightMm below it: the influence areas of both branches (each growing by
+// tan(angle) per mm of descent, TreeSupport merge_influence_areas) meet within MergeDescentMm below the lower one, mm.
 constexpr double MergeHeightMm  = 10.0;
+constexpr double MergeDescentMm = 2.0;
 
 inline double mm2(double scaled_area) { return scaled_area * SCALING_FACTOR * SCALING_FACTOR; }
 inline double mm2(const ExPolygons &ex) { return mm2(area(ex)); }
@@ -729,8 +731,8 @@ void Planner::tails_without_downward()
 }
 
 // MayMergeOntoModel (theory §5.3, v1 heuristic): a painted plate placement that a painted on-model placement at most
-// MergeHeightMm below it comes within branch_diameter + Δz·tan(tree angle) of: their branches may merge and end on the
-// model (TreeSupport.cpp:2057).
+// MergeHeightMm below it comes within branch_diameter + (2·MergeDescentMm + Δz)·tan(tree angle) of: their branches may
+// merge and end on the model (TreeSupport.cpp:2057).
 void Planner::may_merge()
 {
     std::vector<size_t> on_model;
@@ -752,7 +754,7 @@ void Planner::may_merge()
             const double dz = in.layers[pl.layer].print_z - in.layers[q.layer].print_z;
             if (dz > MergeHeightMm)
                 continue;
-            const coord_t r = scaled<coord_t>(p.branch_diameter + dz * tan_a);
+            const coord_t r = scaled<coord_t>(p.branch_diameter + (2. * MergeDescentMm + dz) * tan_a);
             if (! get_extents(q.area).inflated(double(r)).overlap(pb) || intersection(offset(q.area, float(r)), to_polygons(pl.area)).empty())
                 continue;
             n = pl.layer;

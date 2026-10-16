@@ -987,3 +987,135 @@ TEST_CASE("Reference #25: timings", "[.benchmark][sas-reference-bench]")
                   << "), " << r.placements.size() << " placements, " << r.report.size() << " report rows" << std::endl;
     }
 }
+
+namespace {
+
+// A 20 × 20 × 2 plate at z 10..12 on a 4 × 4 post at its corner, plus pendant parts (as the islands tests).
+Parts plate_with(Parts pendants)
+{
+    Parts out { box({ -10., -10., 10. }, { 10., 10., 12. }), box({ 6., 6., 0. }, { 10., 10., 10. }) };
+    append(out, std::move(pendants));
+    return out;
+}
+
+// A ball R 8 floating `gap` above the floor of an open cup (40 × 40 × 30, 5 mm walls and floor), theory §10.
+Parts ball_in_cup(double gap = 3.)
+{
+    return { box({ -20., -20., 0. }, { 20., 20., 5. }), box({ -20., -20., 5. }, { -15., 20., 30. }), box({ 15., -20., 5. }, { 20., 20., 30. }),
+             box({ -15., -20., 5. }, { 15., -15., 30. }), box({ -15., 15., 5. }, { 15., 20., 30. }),
+             translate(its_make_sphere(8., M_PI / 45.), Vec3d(0., 0., 5. + gap + 8.)) };
+}
+
+// Shelf 20 × 15 (x 20 … 40) over a wider block (x 26 … 45, y −5 … 25, top 3 mm below the shelf): plate tips in the 6 mm
+// gap next to the cube, model tips over the block (branches cannot leave it within 3 mm of descent).
+Parts shelf_over_block() { Parts out = shelf_cube(20., 15.); out.push_back(box({ 26., -5., 0. }, { 45., 25., 15. })); return out; }
+
+} // namespace
+
+TEST_CASE("Report: tails without downward facets, unplaced islands fold, dropped manual paint", "[SmartSupports][sas-reference]")
+{
+    SECTION("needle: the tip is placed, its tail has no downward facets") {
+        const SasPrint &sp = cached_print("pendant_needle", [] {
+            return plate_with({ translate(its_make_cylinder(0.5, 5.5, 2. * M_PI / 64.), Vec3d(0., 0., 5.)) });
+        }, sas_config());
+        const SasRun r = run_ref("needle", sp);
+        CHECK(! placements_of(r.result, Cause::Island).empty());
+        CHECK(rows_with(r.result, ReportState::TailWithoutDownwardFacets) == 1);
+    }
+    SECTION("ball in a cup: on the model (prefer plate); unplaceable and folded into one row (plate only)") {
+        {
+            const SasPrint &sp = cached_print("ball_in_cup", [] { return ball_in_cup(); }, sas_config());
+            const SasRun    r  = run_ref("ball in a cup, prefer plate", sp);
+            const auto      islands = placements_of(r.result, Cause::Island);
+            REQUIRE(! islands.empty());
+            CHECK(islands.front()->on_model);
+            int fallback = 0;
+            for (const ReportEntry &e : r.result.report)
+                fallback += e.state == ReportState::OnModelFallback && e.cause == Cause::Island;
+            CHECK(fallback == 1);
+        }
+        UserParams up = ref_params();
+        up.plate_policy = PlatePolicy::PlateOnly;
+        const SasPrint &sp = cached_print("ball_in_cup", [] { return ball_in_cup(); }, sas_config({ { "support_material_buildplate_only", true } }));
+        const SasRun    r  = run_ref("ball in a cup, plate only", sp, up);
+        CHECK(r.result.placements.empty());
+        int rows = 0;
+        for (const ReportEntry &e : r.result.report)
+            if (e.state == ReportState::Unplaceable && e.cause == Cause::Island) {
+                ++ rows;
+                CHECK(e.why == Why::NotReachable);
+                // The island and the cap hanging from it (fronts up to its 45° line, 2.3 mm): one row over the layers.
+                CHECK(e.layer_last >= e.layer_first + 10);
+                CHECK(e.count >= 10);
+            }
+        CHECK(rows == 1);
+    }
+    SECTION("manual enforcer under a T arm over a base, build plate only: dropped") {
+        UserParams up = ref_params();
+        up.plate_policy = PlatePolicy::PlateOnly;
+        const SasPrint &sp = cached_print("t_shape_on_80x80", [] { return t_shape(15., 10., 10., 20., 2., 80.); },
+                                          sas_config({ { "support_material_buildplate_only", true } }));
+        AnalysisInput in = input_of(sp, up);
+        ModifierInput &enf = in.modifiers.emplace_back();
+        enf.mesh     = std::make_shared<const TriangleMesh>(box({ 5., -5., 19.5 }, { 20., 5., 20.5 }));
+        enf.trafo    = in.po_trafo_centered;
+        enf.enforcer = true;
+        const SasRun r = run_input("T on base + manual enforcer, plate only", std::move(in));
+        CHECK(rows_with(r.result, ReportState::WillBeDropped, Why::NotReachable) >= 1);
+        double dropped = 0.;
+        for (const ReportEntry &e : r.result.report)
+            if (e.state == ReportState::WillBeDropped)
+                dropped += e.area_mm2;
+        CHECK(dropped == Approx(150.).epsilon(0.1));
+    }
+    SECTION("inverted 60° cone, interface layers 3: tail rings blocked by the roof gap") {
+        const SasPrint &sp = cached_print("inverted_cone_60", [] { return inverted_cone(60., 10., 5.); },
+                                          sas_config({ { "support_material_interface_layers", 3 } }));
+        const SasRun r = run_ref("inverted cone 60°, interface 3", sp);
+        int gap = 0;
+        for (const ReportEntry &e : r.result.report)
+            gap += e.state == ReportState::Unplaceable && e.why == Why::InterfaceGap && e.cause == Cause::Island;
+        CHECK(gap >= 1);
+    }
+}
+
+TEST_CASE("Report: plate and model placements side by side", "[SmartSupports][sas-reference]")
+{
+    const SasPrint &sp = cached_print("shelf_over_block", shelf_over_block, sas_config());
+    const SasRun    r  = run_ref("shelf over a block", sp);
+    int plate = 0, model = 0;
+    for (const Placement &pl : r.result.placements)
+        (pl.on_model ? model : plate) += 1;
+    CHECK(plate >= 1);
+    CHECK(model >= 1);
+    CHECK(rows_with(r.result, ReportState::OnModelFallback) >= 1);
+    CHECK(rows_with(r.result, ReportState::MayMergeOntoModel) >= 1);
+}
+
+TEST_CASE("run(): re-run on its own paint changes nothing; paint = false", "[SmartSupports][sas-reference]")
+{
+    const SasPrint &sp = cached_print("shelf_10x15", [] { return shelf_cube(10., 15.); }, sas_config());
+    const SasRun    r1 = run_ref("shelf, first run", sp);
+    AnalysisInput   in = r1.input;
+    for (size_t i = 0; i < in.volumes.size(); ++ i)
+        in.volumes[i].paint = r1.result.paint[i].data;
+    const SasRun r2 = run_input("shelf, re-run on its paint", in);
+    REQUIRE(r2.result.paint.size() == r1.result.paint.size());
+    for (size_t i = 0; i < r2.result.paint.size(); ++ i) {
+        CHECK(! r2.result.paint[i].changed);
+        CHECK(r2.result.paint[i].data == r1.result.paint[i].data);
+    }
+    REQUIRE(r2.result.placements.size() == r1.result.placements.size());
+    for (size_t i = 0; i < r1.result.placements.size(); ++ i)
+        CHECK(r2.result.placements[i].area == r1.result.placements[i].area);
+
+    RunOptions opts;
+    opts.paint = false;
+    const SasRun r3 = run_input("shelf, paint = false", r1.input, opts);
+    CHECK(r3.result.placements.size() == r1.result.placements.size());
+    for (size_t i = 0; i < r3.result.paint.size(); ++ i) {
+        CHECK(! r3.result.paint[i].changed);
+        CHECK(r3.result.paint[i].data == r1.input.volumes[i].paint);
+    }
+    CHECK(r3.result.painted_areas[int(Cause::Cantilever)] == 0);
+}
