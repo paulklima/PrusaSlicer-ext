@@ -392,6 +392,122 @@ TEST_CASE("Islands: a floating sphere is one island; unplaced trees fold", "[Sma
     CHECK(folded_total == Approx(plain_total).epsilon(1e-6));
 }
 
+TEST_CASE("Chains: stairs, horizontal holes, dome rings", "[SmartSupports][sas-eval]")
+{
+    SECTION("stairs, treads 2.5: risers 0.4 chain from the 2nd step, risers 1.2 never") {
+        // c = 2.3 per tread; the next tread inherits c·max(0, 1 − (Δz − h)/H_s) (theory §10: 2.3 + 0.8·2.3 = 4.14).
+        const SasPrint     &sp   = cached_print("stairs_0.4", [] { return stairs(2.5, 0.4); }, sas_config());
+        const AnalysisInput in   = input_of(sp);
+        const BaseModel     base = build_base_model(in, {}, {});
+        const PassResult    pass = run_pass("stairs 0.4", in, base, manual_zones(base));
+        const int step2 = layer_at_print_z(in, 5.6);
+        REQUIRE(step2 > 0);
+        CHECK(first_need_layer(pass, Cause::Cantilever, Level::Should) == step2);
+        CHECK(need_area(pass.layers[size_t(step2)], Cause::Cantilever, Level::Must) == 0.);
+        CHECK(pass.layers[size_t(step2)].stats.max_c == Approx(2.3 + 0.8 * 2.3).epsilon(0.03));
+        CHECK(pass.layers[size_t(layer_at_print_z(in, 5.2))].stats.max_c == Approx(2.3).epsilon(0.03));
+        // Step 3 inherits 0.8·4.14: c = 5.6 > f_hard·K → must.
+        CHECK(need_area(pass.layers[size_t(layer_at_print_z(in, 6.0))], Cause::Cantilever, Level::Must) > 0.);
+
+        const SasPrint     &sp12   = cached_print("stairs_1.2", [] { return stairs(2.5, 1.2); }, sas_config());
+        const AnalysisInput in12   = input_of(sp12);
+        const BaseModel     base12 = build_base_model(in12, {}, {});
+        const PassResult    pass12 = run_pass("stairs 1.2", in12, base12, manual_zones(base12));
+        CHECK(total_need_area(pass12) == 0.);
+        CHECK(max_c(pass12) == Approx(2.3).epsilon(0.03));
+    }
+    SECTION("horizontal holes Ø8 / Ø20: chains up to the last open layer, the closing gap is a bridge") {
+        // Ceiling of radius R: c(x) = R√2 − x − √(R² − x²) (theory §10, review 1 M4). The last open layer (h 0.2) has the
+        // half chord x_last = √(R² − (R − 0.1)²); the closing layer above is a short bridge (tension covered). So the
+        // sliced maximum is c(x_last): 0.87 for Ø8, 2.83 for Ø20 (the theory's 1.7 / 4.1 are the limits x → 0).
+        auto c_last = [](double R) {
+            const double z = R - 0.1, x = std::sqrt(R * R - z * z);
+            return R * std::sqrt(2.) - x - z;
+        };
+        const SasPrint     &sp8   = cached_print("hole_8", [] { return hole_block(8.); }, sas_config());
+        const AnalysisInput in8   = input_of(sp8);
+        const BaseModel     base8 = build_base_model(in8, {}, {});
+        const PassResult    pass8 = run_pass("hole Ø8", in8, base8, manual_zones(base8));
+        CHECK(total_need_area(pass8) == 0.);
+        CHECK(max_c(pass8) == Approx(c_last(4.)).margin(0.1));
+
+        const SasPrint     &sp20   = cached_print("hole_20", [] { return hole_block(20., 40., 20., 40.); }, sas_config());
+        const AnalysisInput in20   = input_of(sp20);
+        const BaseModel     base20 = build_base_model(in20, {}, {});
+        const PassResult    pass20 = run_pass("hole Ø20", in20, base20, manual_zones(base20));
+        CHECK(total_need_area(pass20) == 0.);
+        CHECK(max_c(pass20) == Approx(c_last(10.)).margin(0.15));
+    }
+    SECTION("dome R 20 / 25: hoop bands cover all rings; B_ceil 0: first need at z 19.0, hole r 6.3") {
+        const SasPrint &sp = cached_print("dome_20_25", [] { return dome(20., 25.); }, sas_config());
+        {
+            const AnalysisInput in   = input_of(sp);
+            const BaseModel     base = build_base_model(in, {}, {});
+            const PassResult    pass = run_pass("dome", in, base, manual_zones(base));
+            CHECK(total_need_area(pass) == 0.);
+        }
+        UserParams up = ref_params();
+        up.B_ceil = 0.;
+        const AnalysisInput in   = input_of(sp, up);
+        const BaseModel     base = build_base_model(in, {}, {});
+        const PassResult    pass = run_pass("dome, B_ceil 0", in, base, manual_zones(base));
+        const int n = first_need_layer(pass, Cause::Cantilever, Level::May);
+        REQUIRE(n > 0);
+        CHECK(first_need_layer(pass, Cause::Island, Level::May) < 0);
+        CHECK(first_need_layer(pass, Cause::LongSpan, Level::May) < 0);
+        CHECK(need_area(pass.layers[size_t(n)], Cause::Cantilever, Level::Must) == 0.);
+        const double z = in.layers[size_t(n)].slice_z;
+        REQUIRE(in.layers[size_t(n)].lslices.size() == 1);
+        REQUIRE(in.layers[size_t(n)].lslices.front().holes.size() == 1);
+        const double r_hole = std::sqrt(std::abs(in.layers[size_t(n)].lslices.front().holes.front().area()) / M_PI) * SCALING_FACTOR;
+        std::cout << "dome, B_ceil 0: first need at slice_z " << z << ", hole r " << r_hole << ", max c " << max_c(pass) << std::endl;
+        // Theory: c = 3 at hole r 6.3 (z 18.98); the slices are 0.2 mm apart (r 6.54 at z 18.9, 5.93 at z 19.1).
+        CHECK(z == Approx(19.0).margin(0.3));
+        CHECK(r_hole == Approx(6.3).margin(0.4));
+        // c at the hole edge = R√2 − r − z (the continuous formula holds layer by layer).
+        CHECK(pass.layers[size_t(n)].stats.max_c == Approx(20. * std::sqrt(2.) - r_hole - z).margin(0.15));
+        CHECK(pass.layers[size_t(n) - 1].stats.max_c < 3.f);
+    }
+}
+
+TEST_CASE("Ungrounded material: a slab resting on a floating box hangs from the post only", "[SmartSupports][sas-eval]")
+{
+    // Post 5 × 10 × 10 and a 10 × 10 box 10 mm away, a slab 25 × 10 × 2 on top of both. With the box on the bed the
+    // gap is a 9.6 mm bridge (covered); with the box floating (an island, z 5..10) its top is ungrounded material:
+    // no anchor, the lines run through it to the free end of the slab (t = ∞) and the gap is a cantilever from the post.
+    auto parts = [](double box_z0) {
+        return Parts{ box({ 0., 0., 0. }, { 5., 10., 10. }), box({ 15., 0., box_z0 }, { 25., 10., 10. }),
+                      box({ 0., 0., 10. }, { 25., 10., 12. }) };
+    };
+    const SasPrint &grounded = cached_print("slab_on_box_grounded", [&] { return parts(0.); }, sas_config());
+    const SasPrint &floating = cached_print("slab_on_box_floating", [&] { return parts(5.); }, sas_config());
+    {
+        const AnalysisInput in   = input_of(grounded);
+        const BaseModel     base = build_base_model(in, {}, {});
+        CHECK(base.trees.empty());
+        const PassResult pass = run_pass("slab on a grounded box", in, base, manual_zones(base));
+        CHECK(total_need_area(pass) == 0.);
+    }
+    const AnalysisInput in   = input_of(floating);
+    const BaseModel     base = build_base_model(in, {}, {});
+    REQUIRE(base.trees.size() == 1);
+    const PassResult pass = run_pass("slab on a floating box", in, base, manual_zones(base));
+    const int first = int(base.trees.front().first);
+    const int slab  = layer_at_print_z(in, 10.2);
+    REQUIRE(slab > first);
+    // The box bottom is the island.
+    CHECK(mm2(pass.layers[size_t(first)].need[int(Cause::Island)][int(Level::Must)]) == Approx(100.).epsilon(0.02));
+    // The gap: c = d − w from the post side; should beyond 3.2, must beyond 4.7 mm from the post (gap 5.2 … 14.8).
+    const LayerNeeds &ln = pass.layers[size_t(slab)];
+    CHECK(need_area(ln, Cause::Island) == 0.);
+    CHECK(need_area(ln, Cause::LongSpan) == 0.);
+    CHECK(mm2(ln.need[int(Cause::Cantilever)][int(Level::Should)]) == Approx(1.5 * 10.).epsilon(0.1));
+    CHECK(mm2(ln.need[int(Cause::Cantilever)][int(Level::Must)]) == Approx((14.8 - 9.7) * 10.).epsilon(0.1));
+    CHECK(ln.stats.max_c == Approx(9.6).epsilon(0.05));
+    // Nothing else in between (vertical box walls).
+    CHECK(total_need_area(pass) == Approx(need_area(pass.layers[size_t(first)]) + need_area(ln)).epsilon(1e-9));
+}
+
 TEST_CASE("Touched clusters: a partial re-evaluation equals a full one", "[SmartSupports][sas-eval]")
 {
     const SasPrint     &sp   = cached_print("t_shape_15", [] { return t_shape(); }, sas_config());
@@ -538,6 +654,25 @@ TEST_CASE("evaluate_pass is deterministic and cancelable", "[SmartSupports][sas-
     CHECK(equal);
     CHECK(total_need_area(multi) > 10.);       // the shallow rings need support (theory §10 "Sphere R 20 on the bed")
     CHECK(max_c(multi) == Approx(6.4).epsilon(0.15));
+    // The needs form a band from ≈ 5.8 mm radius to the 45° slope at ≈ 14.1 mm (theory §10), must in its outer part.
+    {
+        const Point  centre = get_extents(in.layers[in.layers.size() / 2].lslices).center();
+        double       r_min = 1e9, r_max = 0., r_must_min = 1e9;
+        for (const LayerNeeds &ln : multi.layers)
+            for (int l = 0; l < 3; ++ l)
+                for (const ExPolygon &ex : ln.need[int(Cause::Cantilever)][l])
+                    for (const Point &p : ex.contour.points) {
+                        const double r = (p - centre).cast<double>().norm() * SCALING_FACTOR;
+                        r_min = std::min(r_min, r);
+                        r_max = std::max(r_max, r);
+                        if (l == int(Level::Must))
+                            r_must_min = std::min(r_must_min, r);
+                    }
+        std::cout << "sphere R 20: needs between r " << r_min << " and " << r_max << ", must from r " << r_must_min << std::endl;
+        CHECK(r_min == Approx(5.8).margin(0.6));
+        CHECK(r_max == Approx(14.1).margin(0.6));
+        CHECK(r_must_min > r_min + 0.5);
+    }
 
     // Cancel after a few evaluations: CanceledException, no hang.
     std::atomic<int> calls { 0 };
@@ -553,3 +688,54 @@ TEST_CASE("evaluate_pass is deterministic and cancelable", "[SmartSupports][sas-
     CHECK(pct.back() == 100);
 }
 
+
+TEST_CASE("evaluate_pass timings", "[.benchmark][sas-eval-bench]")
+{
+    struct Shape { const char *name; std::function<Parts()> parts; };
+    const std::vector<Shape> shapes {
+        { "figurine_proxy", [] { return figurine_proxy(); } },
+        { "t_shape_on_80x80", [] { return t_shape(15., 10., 10., 20., 2., 80.); } },
+        { "hole_50", [] { return hole_block(50., 70., 20., 70.); } },
+        { "dome_20_25", [] { return dome(20., 25.); } },
+        { "shelf_10x30", [] { return shelf_cube(10., 30., 30.); } },
+    };
+    for (const Shape &shape : shapes) {
+        const SasPrint     &sp   = cached_print(shape.name, shape.parts, sas_config());
+        const AnalysisInput in   = input_of(sp);
+        const auto          t0   = std::chrono::steady_clock::now();
+        const BaseModel     base = build_base_model(in, {}, {});
+        const auto          t1   = std::chrono::steady_clock::now();
+        const PassResult    pass = run_pass(shape.name, in, base, manual_zones(base));
+        size_t fronts = 0, clusters = 0;
+        for (const LayerGeom &lg : base.layers) {
+            fronts   += lg.fronts.size();
+            clusters += lg.clusters.size();
+        }
+        std::cout << shape.name << ": Phase A " << std::chrono::duration<double>(t1 - t0).count() << " s, " << fronts << " fronts, "
+                  << clusters << " clusters, needs " << total_need_area(pass) << " mm², max c " << max_c(pass) << std::endl;
+
+        // Largest wide front: domain edges + tension alone (LinesDistancer<Line> queries, WP2b1 note).
+        const FrontGeom *big = nullptr;
+        const Cluster   *big_cl = nullptr;
+        for (const LayerGeom &lg : base.layers)
+            for (const Cluster &cl : lg.clusters)
+                for (uint32_t idx : cl.fronts)
+                    if (lg.fronts[idx].wide && (! big || lg.fronts[idx].area_mm2 > big->area_mm2)) {
+                        big    = &lg.fronts[idx];
+                        big_cl = &cl;
+                    }
+        if (big) {
+            const ExPolygons GP = diff_ex(big_cl->band, ExPolygons{ big->C });
+            const ExPolygons D { big->C };
+            const Anchors    A = compute_anchors(D, big->C, GP, {}, big_cl->band);
+            const auto       u0 = std::chrono::steady_clock::now();
+            const DomainEdges e = domain_edges(D, GP);
+            const auto       u1 = std::chrono::steady_clock::now();
+            const TensionMap tm = tension_levels(D, *big, D, e, A, in.params);
+            const auto       u2 = std::chrono::steady_clock::now();
+            std::cout << "  largest wide front " << big->area_mm2 << " mm², " << big->thetas.size() << " θ: domain_edges "
+                      << std::chrono::duration<double>(u1 - u0).count() << " s, tension_levels "
+                      << std::chrono::duration<double>(u2 - u1).count() << " s, " << tm.cuts.size() << " cuts" << std::endl;
+        }
+    }
+}
