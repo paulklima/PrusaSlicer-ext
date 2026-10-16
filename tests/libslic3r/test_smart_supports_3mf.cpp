@@ -277,6 +277,49 @@ TEST_CASE("3MF bake: stock PrusaSlicer sees enforcers", "[SmartSupports][sas-3mf
     CHECK(dst.objects.front()->volumes[2]->supported_facets.empty());
 }
 
+// Review A M1: the fork attribute is chosen per triangle. A triangle that has only the standard attribute (an externally
+// edited file) keeps its paint, baked; the other triangles of the volume still load their smart states.
+TEST_CASE("3MF: the fork attribute is chosen per triangle", "[SmartSupports][sas-3mf]")
+{
+    Model src;
+    make_model(src, true);
+    const std::string path   = temp_file("per-triangle.3mf");
+    const std::string edited = temp_file("per-triangle-edited.3mf");
+    store(path, src);
+    ZipEntries   entries = read_zip(path);
+    std::string &xml     = model_file(entries);
+    const size_t before  = count_substr(xml, EXT_ATTR);
+    REQUIRE(before > 1);
+    // Strip the fork attribute of the first triangle whose smart string differs from its baked one.
+    const std::regex pair_re(std::string("slic3rpe:custom_supports=\"([0-9A-F]*)\"( ") + EXT_ATTR + "=\"([0-9A-F]*)\")");
+    size_t pos = std::string::npos, len = 0;
+    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), pair_re); it != std::sregex_iterator(); ++ it)
+        if ((*it)[1].str() != (*it)[3].str()) {
+            pos = size_t(it->position(2));
+            len = size_t(it->length(2));
+            break;
+        }
+    REQUIRE(pos != std::string::npos);
+    xml.erase(pos, len);
+    REQUIRE(count_substr(xml, EXT_ATTR) == before - 1);
+    write_zip(edited, entries);
+
+    Model dst;
+    load(edited, dst);
+    boost::filesystem::remove(path);
+    boost::filesystem::remove(edited);
+    const ModelVolume &a = *src.objects.front()->volumes.front();
+    const ModelVolume &b = *dst.objects.front()->volumes.front();
+    CHECK(b.supported_facets.has_auto_states());
+    // Nothing is lost: the stripped triangle reads its baked string (smart states → enforcer).
+    CHECK(state_area(b, enforcer_like_states()) == Approx(state_area(a, enforcer_like_states())).margin(1e-6));
+    CHECK(state_area(b, TriangleStateType::BLOCKER) == Approx(state_area(a, TriangleStateType::BLOCKER)).margin(1e-6));
+    CHECK(! FacetsAnnotation::same_paint(a.supported_facets.get_data(), b.supported_facets.get_data()));
+    for (size_t i = 1; i < 3; ++ i)
+        CHECK(FacetsAnnotation::same_paint(src.objects.front()->volumes[i]->supported_facets.get_data(),
+                                           dst.objects.front()->volumes[i]->supported_facets.get_data()));
+}
+
 TEST_CASE("3MF without smart paint is written and read as before", "[SmartSupports][sas-3mf]")
 {
     Model src;

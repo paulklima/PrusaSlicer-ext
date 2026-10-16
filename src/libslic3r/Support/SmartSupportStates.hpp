@@ -63,6 +63,20 @@ inline std::map<TriangleStateType, TriangleStateType> bake_map()
 // Paint rule of the smart painter for one cause bit (TriangleSelector::set_paint_rule()):
 // NONE -> auto(bit); auto(m) -> auto(m | bit); manual states (ENFORCER, BLOCKER) and any other state unchanged.
 // The requested state of select_patch() is ignored.
+// Sets a paint rule for the lifetime of the scope and clears it on exit, also when select_patch() throws (a cancel from a
+// PredicateCursor predicate). A rule left set would turn the next manual strokes on that selector into smart paint
+// (review A M3).
+class PaintRuleScope
+{
+public:
+    PaintRuleScope(TriangleSelector &selector, TriangleSelector::PaintRule rule) : m_selector(selector) { m_selector.set_paint_rule(std::move(rule)); }
+    ~PaintRuleScope() { m_selector.clear_paint_rule(); }
+    PaintRuleScope(const PaintRuleScope &) = delete;
+    PaintRuleScope &operator=(const PaintRuleScope &) = delete;
+private:
+    TriangleSelector &m_selector;
+};
+
 inline TriangleSelector::PaintRule tool_paint_rule(uint8_t cause_bit)
 {
     return [cause_bit](TriangleStateType old_state, TriangleStateType /* requested */) {

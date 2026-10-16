@@ -53,6 +53,18 @@ std::vector<int> facets_at_z(const TriangleMesh &mesh, float z)
     return out;
 }
 
+// Original facets in the plane x = const.
+std::vector<int> facets_at_x(const TriangleMesh &mesh, float x)
+{
+    std::vector<int> out;
+    for (size_t i = 0; i < mesh.its.indices.size(); ++ i) {
+        const stl_triangle_vertex_indices &f = mesh.its.indices[i];
+        if (mesh.its.vertices[f(0)].x() == x && mesh.its.vertices[f(1)].x() == x && mesh.its.vertices[f(2)].x() == x)
+            out.push_back(int(i));
+    }
+    return out;
+}
+
 // Original horizontal facet containing p (tested in XY), -1 if none.
 int facet_at(const TriangleMesh &mesh, const Vec3f &p)
 {
@@ -88,11 +100,10 @@ void paint_rule(TriangleSelector &selector, const std::vector<int> &seeds, std::
     TriangleSelector::PredicateCursor::Predicates predicates;
     predicates.point_inside = std::move(point_inside);
     predicates.seed_facets  = seeds;
-    const Transform3d trafo = Transform3d::Identity();
-    selector.set_paint_rule(tool_paint_rule(cause_bit));
+    const Transform3d    trafo = Transform3d::Identity();
+    const PaintRuleScope rule(selector, tool_paint_rule(cause_bit));
     selector.select_patch(seeds.empty() ? 0 : seeds.front(), std::make_unique<TriangleSelector::PredicateCursor>(std::move(predicates), edge_limit, trafo),
                           auto_state(cause_bit), trafo, splitting, 89.99f);
-    selector.clear_paint_rule();
 }
 
 bool on_bottom(const Vec3f &p) { return p.z() < 1e-3f; }
@@ -401,8 +412,24 @@ TEST_CASE("PredicateCursor", "[SmartSupports][sas-selector]")
             return on_bottom(p) && p.x() < 5.f;
         };
         REQUIRE_THROWS_AS(paint_rule(cube.selector, cube.bottom, half, cbIsland), CanceledException);
-        cube.selector.clear_paint_rule();
         CHECK(calls == 200);
+
+        // The rule went with the scope (review A M3): a manual stroke paints what it asks for, not smart paint.
+        {
+            const std::vector<int> side = facets_at_x(cube.mesh, CUBE);
+            REQUIRE(! side.empty());
+            const Vec3f c(CUBE, 0.5f * CUBE, 0.5f * CUBE);
+            cube.selector.select_patch(side.front(), TriangleSelector::SinglePointCursor::cursor_factory(c, c + Vec3f(10.f, 0.f, 0.f), 1.f,
+                                           TriangleSelector::CursorType::SPHERE, Transform3d::Identity(), TriangleSelector::ClippingPlane()),
+                                       TriangleStateType::ENFORCER, Transform3d::Identity(), true);
+            CHECK(state_area(cube.selector, TriangleStateType::ENFORCER) > cube.enf_area + 1.);
+            const double side_auto = state_area(cube.selector, auto_state(cbIsland));
+            cube.selector.select_patch(side.front(), TriangleSelector::SinglePointCursor::cursor_factory(c, c + Vec3f(10.f, 0.f, 0.f), 1.f,
+                                           TriangleSelector::CursorType::SPHERE, Transform3d::Identity(), TriangleSelector::ClippingPlane()),
+                                       TriangleStateType::NONE, Transform3d::Identity(), true);
+            CHECK(state_area(cube.selector, TriangleStateType::ENFORCER) == Approx(cube.enf_area).margin(1e-6));
+            CHECK(state_area(cube.selector, auto_state(cbIsland)) == Approx(side_auto).margin(1e-6));
+        }
 
         // The tree is consistent: serialization round trip, manual paint intact, the surface complete.
         const TriangleSelector::TriangleSplittingData data = cube.selector.serialize();
@@ -525,9 +552,36 @@ TEST_CASE("FacetsAnnotation smart paint helpers", "[SmartSupports][sas-selector]
         for (int i = 0; i < int(mv->mesh().its.indices.size()); ++ i)
             CHECK(FacetsAnnotation::triangle_as_string(fa.get_data(), i) == fa.get_triangle_as_string(i));
 
+        // reset() is stock again (review A M4): the paint goes, used_states stay (only the 3MF painting version reads them).
+        const auto used = fa.get_data().used_states;
         fa.reset();
         CHECK(! fa.has_auto_states());
         CHECK(! fa.has_enforcer_like_facets());
-        CHECK(std::count(fa.get_data().used_states.begin(), fa.get_data().used_states.end(), true) == 0);
+        CHECK(fa.get_data().used_states == used);
+    }
+
+    SECTION("data after the end of a tree is ignored as by deserialize() (review A M2)") {
+        // Strings as in a 3MF (the last digit is the first code): a BLOCKER leaf, then a stray ENFORCER code / a stray
+        // auto(1) leaf (two nibbles) that no tree reaches.
+        for (const char *str : { "48", "0C8" }) {
+            INFO(str);
+            fa.reset();
+            fa.reserve(12);
+            fa.set_triangle_from_string(0, str);
+            fa.shrink_to_fit();
+            REQUIRE(TriangleSelector::has_facets(fa.get_data(), TriangleStateType::BLOCKER));
+            CHECK(! TriangleSelector::has_facets(fa.get_data(), TriangleStateType::ENFORCER));
+            CHECK(! fa.has_enforcer_like_facets());
+            CHECK(! fa.has_auto_states());
+        }
+        // A split root (code 1: two children) with an auto(1) leaf (codes C, 0) and a BLOCKER leaf (8): found.
+        fa.reset();
+        fa.reserve(12);
+        fa.set_triangle_from_string(0, "80C1");
+        fa.shrink_to_fit();
+        const auto [any_auto, any_enforcer_like] = reference();
+        CHECK(any_auto);
+        CHECK(fa.has_auto_states() == any_auto);
+        CHECK(fa.has_enforcer_like_facets() == any_enforcer_like);
     }
 }

@@ -471,11 +471,10 @@ VolumePaint paint_volume(const VolumeInput &volume, const std::vector<CauseRegio
         const int facet_start   = seeds[r].front();
         predicates.seed_facets  = std::move(seeds[r]);
         const uint8_t bit = regions[r].bit;
-        selector.set_paint_rule(tool_paint_rule(bit));
+        const PaintRuleScope rule(selector, tool_paint_rule(bit));          // cleared on a cancel too
         selector.select_patch(facet_start,
                               std::make_unique<TriangleSelector::PredicateCursor>(std::move(predicates), edge_limit, volume.trafo),
                               auto_state(bit), linear, true, 89.99f);
-        selector.clear_paint_rule();
     }
 
     out.data    = selector.serialize();

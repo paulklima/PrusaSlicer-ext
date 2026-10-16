@@ -716,7 +716,6 @@ public:
 
     // Following method clears the config and increases its timestamp, so the deleted
     // state is considered changed from perspective of the undo/redo stack.
-    // The used states are reset as well.
     void reset();
 
     // Serialize triangle into string, for serialization into 3MF/AMF.
