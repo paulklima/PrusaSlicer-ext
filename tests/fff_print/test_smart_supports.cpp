@@ -20,6 +20,7 @@
 
 #include "smart_supports_test_utils.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/Layer.hpp"
 #include "libslic3r/PrintBase.hpp"
 #include "libslic3r/Support/SmartSupportsInternal.hpp"
 
@@ -1008,6 +1009,91 @@ TEST_CASE("Reference #25: timings", "[.benchmark][sas-reference-bench]")
 
 namespace {
 
+// Calibration scene of MayMergeOntoModel: a stem wall (x −3 … 0) carrying arm B (15 × 10 × 2) over the plate at height
+// H + dz and, with_a, arm A (15 × 10 × 2) at height H over a block (x 0 … 30, y −20 … 10) whose top is h_q below the arm
+// (A's support rests on the block: its branches are h_q long), D apart along y. The block ends at y block_y1 (≥ 10).
+Parts two_arms(double H, double dz, double D, bool with_a, double h_q = 3., double block_y1 = 10.)
+{
+    const double y0 = 10. + D, y1 = 20. + D;
+    Parts parts { box({ -3., -20., 0. }, { 0., y1 + 5., H + dz + 2. }), box({ 0., y0, H + dz }, { 15., y1, H + dz + 2. }) };
+    if (with_a) {
+        parts.push_back(box({ 0., 0., H }, { 15., 10., H + 2. }));
+        parts.push_back(box({ 0., -20., 0. }, { 30., block_y1, H - h_q }));
+    }
+    return parts;
+}
+
+// Fully processed print (support generated) of the parts with support enforcer volumes.
+std::unique_ptr<SasPrint> make_processed_print(const Parts &parts, const Parts &enforcers, const DynamicPrintConfig &config)
+{
+    auto out = std::make_unique<SasPrint>();
+    DynamicPrintConfig full_config = DynamicPrintConfig::full_print_config();
+    full_config.apply(config);
+    ModelObject *object = out->model.add_object();
+    for (const indexed_triangle_set &its : parts)
+        object->add_volume(TriangleMesh(its));
+    for (const indexed_triangle_set &its : enforcers)
+        object->add_volume(TriangleMesh(its), ModelVolumeType::SUPPORT_ENFORCER);
+    object->add_instance();
+    out->model.center_instances_around_point({ 100., 100. });
+    object->ensure_on_bed();
+    out->print.auto_assign_extruders(object);
+    out->print.apply(out->model, full_config);
+    if (std::string err = out->print.validate(); ! err.empty())
+        throw std::runtime_error("make_processed_print: " + err);
+    out->print.set_status_silent();
+    out->print.process();
+    return out;
+}
+
+} // namespace
+
+// Calibration of the MayMergeOntoModel heuristic against the slicer itself (no test prints needed, WP5): arm A (15 × 10
+// at height 20) over a block (on-model support, branches h_q long), arm B the same size dz higher over the plate, gap D
+// between them along y; both enforced beyond x 3.2 (the need zone of #2). Without merging, B's branches stand on the
+// plate; merged into A's on-model branches they end on the block. Printed: the support area resting on the block with
+// B's tips present, relative to A's tips alone (> 1: B's branches landed on the model). A's tips next to the block edge
+// reach the plate; merges with those are harmless and do not show here.
+TEST_CASE("Calibration: plate branches merging onto the model", "[.calibration][sas-merge-calibration]")
+{
+    const DynamicPrintConfig config = sas_config();
+    const double H = 20.;
+    for (double h_q : { 3., 6. })
+        for (double dz : { 0., 4. }) {
+            // Enforcers beyond x 3.2 under the arms, off the slicing planes; B's tips only with_b.
+            auto make = [&](double D, bool with_b) {
+                Parts parts = two_arms(H, dz, D, true, h_q);
+                Parts enf { box({ 3.2, 0.01, H - 0.05 }, { 16., 9.99, H + 0.15 }) };
+                if (with_b)
+                    enf.push_back(box({ 3.2, 10. + D + 0.01, H + dz - 0.05 }, { 16., 20. + D - 0.01, H + dz + 0.15 }));
+                return make_processed_print(parts, enf, config);
+            };
+            // Support area resting on the block top (the lowest support layers above it, inside its footprint
+            // x 0 … 30, y −20 … 10 of the object frame; the stem starts at x −3, y −20).
+            auto on_block = [&](const SasPrint &sp) {
+                const PrintObject &po = *sp.print_object();
+                const BoundingBox bb  = get_extents(po.layers().front()->lslices);
+                const Point       o   = bb.min + Point(scaled<coord_t>(3.), scaled<coord_t>(20.));   // object (0, 0)
+                const Polygon     foot = BoundingBox(o + Point(0, scaled<coord_t>(-20.)), o + Point(scaled<coord_t>(30.), scaled<coord_t>(10.))).polygon();
+                double a = 0.;
+                for (const SupportLayer *sl : po.support_layers())
+                    if (sl->print_z > H - h_q + 0.01 && sl->print_z < H - h_q + 0.61)
+                        a = std::max(a, area(intersection_ex(sl->support_islands, ExPolygons{ ExPolygon(foot) })) * SCALING_FACTOR * SCALING_FACTOR);
+                return a;
+            };
+            std::ostringstream os;
+            os << "[sas-merge] A's branches " << h_q << " mm, B " << dz << " mm higher; support on the block with B at gap D / A alone:";
+            for (double D : { 1., 2., 3., 4., 6., 8., 12. }) {
+                const double alone = on_block(*make(D, false));
+                const double with  = on_block(*make(D, true));
+                os << " " << D << ": " << (alone > 0. ? with / alone : -1.);
+            }
+            std::cout << os.str() << std::endl;
+        }
+}
+
+namespace {
+
 // A 20 × 20 × 2 plate at z 10..12 on a 4 × 4 post at its corner, plus pendant parts (as the islands tests).
 Parts plate_with(Parts pendants)
 {
@@ -1107,7 +1193,35 @@ TEST_CASE("Report: plate and model placements side by side", "[SmartSupports][sa
     CHECK(plate >= 1);
     CHECK(model >= 1);
     CHECK(rows_with(r.result, ReportState::OnModelFallback) >= 1);
-    CHECK(rows_with(r.result, ReportState::MayMergeOntoModel) >= 1);
+    // Calibrated MayMergeOntoModel (WP5): the on-model must zone starts ≈ f_hard·K_max beyond the plate contact, here
+    // 4.8 mm from the plate placement at the same layer, beyond branch_d + 2·2 mm·tan(25°) = 3.9 mm: no flag (the slicer
+    // merged nothing at gaps ≥ 1 mm with on-model branches ≤ 4 mm long and Δz 0, [sas-merge-calibration]).
+    CHECK(rows_with(r.result, ReportState::MayMergeOntoModel) == 0);
+}
+
+TEST_CASE("Report: a plate placement above a close on-model placement may merge onto it", "[SmartSupports][sas-reference]")
+{
+    // Arm A over a block (top 2 mm below A, reaching halfway into the gap, so A's support stands on it), arm B over the
+    // plate 4 mm higher, D apart: the heuristic's reach at Δz 4 is branch_d + (2·2 + 4)·tan 25° = 5.7 mm (the slicer
+    // merged plate branches onto the model at gaps ≤ 3 mm there, [sas-merge-calibration]).
+    for (const auto &[D, flagged] : { std::pair<double, bool>{ 4., true }, { 10., false } }) {
+        const SasPrint &sp = cached_print("two_arms_20_4_" + std::to_string(int(D)), [D = D] { return two_arms(20., 4., D, true, 2., 10. + 0.5 * D); },
+                                          sas_config());
+        const SasRun r = run_ref(flagged ? "two arms, D 4" : "two arms, D 10", sp);
+        double gap = 1e9;
+        for (const Placement &pl : r.result.placements)
+            if (! pl.on_model)
+                for (const Placement &q : r.result.placements)
+                    if (q.on_model && q.layer < pl.layer) {
+                        double d = 0.;
+                        while (d < 20. && intersection_ex(offset_ex(q.area, scaled<float>(d)), pl.area).empty())
+                            d += 0.05;
+                        gap = std::min(gap, d);
+                    }
+        std::cout << "two arms, D " << D << ": plate placement " << gap << " mm from the on-model one below" << std::endl;
+        CHECK(gap == Approx(D).margin(0.3));
+        CHECK((rows_with(r.result, ReportState::MayMergeOntoModel) >= 1) == flagged);
+    }
 }
 
 TEST_CASE("run(): re-run on its own paint changes nothing; paint = false", "[SmartSupports][sas-reference]")

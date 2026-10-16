@@ -42,10 +42,15 @@ constexpr double RowClosingMm   = 0.5;
 constexpr double RowSampleMm    = 0.05;
 // Verification: needs within this distance of a reported plan residual of the same layer are not new, mm (§3.10).
 constexpr double VerifyMarginMm = 0.5;
-// MayMergeOntoModel heuristic: a painted plate placement within branch_diameter + (2·MergeDescentMm + Δz)·tan(tree angle)
-// of a painted on-model placement at most MergeHeightMm below it: the influence areas of both branches (each growing by
-// tan(angle) per mm of descent, TreeSupport merge_influence_areas) meet within MergeDescentMm below the lower one, mm.
-constexpr double MergeHeightMm  = 10.0;
+// MayMergeOntoModel heuristic (calibrated by WP5 against the slicer, see wp-log-wp5.md): a painted plate placement within
+// branch_diameter + (2·MergeDescentMm + Δz)·tan(support_tree_angle_slow) of a painted on-model placement at most
+// MergeHeightMm below it. The influence areas of both branches grow by the slow move per mm of descent (the slicer tries
+// AvoidanceType::Slow first, TreeSupport.cpp:1878-1890) and merge_influence_areas_two_elements() merges a "to plate" into
+// a "to model" branch (to_buildplate = a && b) only while the plate branch is at most max_to_model_radius_increase
+// (0.5 mm, TreeSupportCommon.hpp:201) thicker: its radius grows by tan(support_tree_branch_diameter_angle = 5°) per mm,
+// so Δz ≤ 0.5 / tan 5° ≈ 5.7 mm. Measured ([sas-merge-calibration]): partial merges up to 4 mm apart at Δz 4, none at
+// 6 mm; the formula gives 5.7 mm there (3.9 mm at Δz 0), mm.
+constexpr double MergeHeightMm  = 6.0;
 constexpr double MergeDescentMm = 2.0;
 
 inline double mm2(double scaled_area) { return scaled_area * SCALING_FACTOR * SCALING_FACTOR; }
@@ -731,8 +736,8 @@ void Planner::tails_without_downward()
 }
 
 // MayMergeOntoModel (theory §5.3, v1 heuristic): a painted plate placement that a painted on-model placement at most
-// MergeHeightMm below it comes within branch_diameter + (2·MergeDescentMm + Δz)·tan(tree angle) of: their branches may
-// merge and end on the model (TreeSupport.cpp:2057).
+// MergeHeightMm below it comes within branch_diameter + (2·MergeDescentMm + Δz)·tan(slow tree angle) of: their branches
+// may merge and end on the model (TreeSupport.cpp:2057). An on-model placement above the plate one is not checked.
 void Planner::may_merge()
 {
     std::vector<size_t> on_model;
@@ -741,7 +746,7 @@ void Planner::may_merge()
             on_model.push_back(i);
     if (on_model.empty())
         return;
-    const double tan_a = std::tan(std::clamp(p.tree_angle_deg, 0., 89.) * M_PI / 180.);
+    const double tan_a = std::tan(std::clamp(p.tree_angle_slow_deg, 0., 89.) * M_PI / 180.);
     for (size_t i = 0; i < plan.placements.size(); ++ i) {
         const Placement &pl = plan.placements[i];
         if (pl.on_model || ! this->painted(pl) || pl.area.empty())
