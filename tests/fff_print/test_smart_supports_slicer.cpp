@@ -8,6 +8,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -281,4 +282,55 @@ TEST_CASE("Organic support from smart paint", "[SmartSupports][sas-slicer][slow]
             }
         }
     }
+}
+
+// WP5 regression: slice_mesh_slabs() converts slab-edge vertices by truncation and on-plane edge vertices by rounding,
+// so a painted vertex exactly on a slicing plane got two positions 1 nm apart (assert in
+// chain_lines_by_triangle_connectivity(); found by the assert-enabled portability build). The smart paint of the
+// inverted 60° cone has such vertices (TriangleSelector's midpoint splits of the flank z 5…15 hit z 7.5 = slice_z of
+// layer 37); project_states() feeds the slicer vertices whose XY is rounded to whole scaled units.
+TEST_CASE("project_states with paint vertices on slicing planes", "[SmartSupports][sas-slicer]")
+{
+    const SasPrint &sp = cached_print("inverted_cone_60", [] { return inverted_cone(60., 10., 5.); }, sas_config());
+    UserParams up;
+    up.alpha_deg = 45;
+    const SasRun r = run_sas(sp.print, up);
+    REQUIRE(r.result.paint.size() == r.input.volumes.size());
+    std::set<float> planes;
+    for (const LayerInput &layer : r.input.layers)
+        planes.insert(float(layer.slice_z));
+    // Vertices of the painted facets (as the slicer transforms them) that lie exactly on a slicing plane.
+    size_t on_plane = 0;
+    std::vector<const TriangleSelector::TriangleSplittingData*> per_volume;
+    for (size_t i = 0; i < r.input.volumes.size(); ++ i) {
+        per_volume.push_back(&r.result.paint[i].data);
+        TriangleSelector selector(*r.input.volumes[i].mesh);
+        selector.deserialize(r.result.paint[i].data, false);
+        const indexed_triangle_set facets = selector.get_facets_strict(enforcer_like_states());
+        Transform3d t = r.input.volumes[i].trafo;
+        t.prescale(Vec3d(1. / SCALING_FACTOR, 1. / SCALING_FACTOR, 1.));
+        const Transform3f tf = t.cast<float>();
+        for (const Vec3f &v : facets.vertices)
+            on_plane += planes.count((tf * v).z()) > 0;
+    }
+    CHECK(on_plane > 0);
+    const std::vector<Polygons> proj = project_states(r.input, per_volume, [](TriangleStateType st) { return acts_as_enforcer(st); }, {});
+    REQUIRE(proj.size() == r.input.layers.size());
+    // Every placement layer has its projection. (The tail rings next to the apex are painted only partly: the prism of
+    // the apex layer is empty - the noise filter drops the apex ring - and leaves crossing it stay unpainted, by design
+    // of the sound predicate; the contact's tip_d growth covers them, see "Verification adds nothing ...".) The total
+    // stays within the prisms (k_d = 1 layer, e = 0.25 mm).
+    for (const Placement &pl : r.result.placements) {
+        INFO("placement layer " << pl.layer);
+        CHECK(area_mm2(intersection_ex(union_ex(proj[pl.layer]), pl.area)) > 0.1 * area_mm2(pl.area));
+    }
+    double total = 0.;
+    for (const Polygons &layer : proj)
+        total += area_mm2(layer);
+    double planned = 0.;
+    for (const Placement &pl : r.result.placements)
+        planned += area_mm2(pl.area);
+    INFO("projected " << total << " mm², planned " << planned << " mm², vertices on planes " << on_plane);
+    CHECK(total > 0.5 * planned);
+    CHECK(total < 4. * planned + 20.);
 }
