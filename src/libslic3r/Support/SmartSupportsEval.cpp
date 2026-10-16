@@ -517,7 +517,7 @@ std::shared_ptr<const ClusterOut> LayerEvaluator::Impl::eval_cluster(uint32_t n,
             }
             e = it->second;
         }
-        g.tension = tension_levels(g.cprime, front, ExPolygons{ D[size_t(g.k)] }, e, fw[g.f].anchors, params);
+        g.tension = tension_levels(g.cprime, front, ExPolygons{ D[size_t(g.k)] }, e, fw[g.f].anchors, params, cancel);
         g.hoop    = hoop_credit(g.cprime, front, true, params);
         Polygons covered = to_polygons(g.tension.covered_all);
         append(covered, to_polygons(g.hoop));
@@ -639,7 +639,7 @@ std::shared_ptr<const ClusterOut> LayerEvaluator::Impl::eval_cluster(uint32_t n,
         // anchors (WP2b2 note); +∞ disables it.
         const float mc  = max_chat[g.f][size_t(g.k)];
         const float cap = g.cprime.size() == 1 && g.cprime.front().holes.empty() && mc >= 0.f ? mc : INF_F;
-        FrontNeeds  fn  = classify_front(g.cprime, *field, g.tension, g.hoop, cap, params);
+        FrontNeeds  fn  = classify_front(g.cprime, *field, g.tension, g.hoop, cap, params, cancel);
         out->max_c = std::max(out->max_c, fn.max_c);
         for (int l = 0; l < 3; ++ l) {
             append_ex(out->need[int(Cause::Cantilever)][l], fn.need[0][l]);

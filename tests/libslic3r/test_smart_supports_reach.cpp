@@ -329,6 +329,21 @@ TEST_CASE("ReachField: conservative raster, thin neck, fallback", "[SmartSupport
     CHECK(std::isinf(none.value(pt(1., 1.))));
 }
 
+// Review B m4: grid_max_pixels caps the grid also beyond grid_res_max (a D component larger than √max_pixels·res_max).
+TEST_CASE("ReachField: the pixel cap wins over grid_res_max", "[SmartSupports][sas-reach]")
+{
+    Params params = test_params();
+    params.grid_max_pixels = 10'000;                              // 100 × 100 cells: 10 mm at 0.1 mm
+    const ExPolygons domain { rectangle_mm(0., 0., 40., 40.) };
+    const ReachField field(domain, domain, seeds_along({ { 0., 0. }, { 0., 40. } }, 0.f), 0., params, {});
+    REQUIRE(! field.direct_mode());
+    CHECK(field.res() > scaled<coord_t>(params.grid_res_max));
+    CHECK(unscale<double>(field.res()) == Catch::Approx(0.4).epsilon(0.05));
+    // Still a distance field: within the 3.5 % grid tolerance plus a cell.
+    for (double x : { 5., 20., 39. })
+        CHECK(double(field.value(pt(x, 20.))) == Catch::Approx(x).margin(0.035 * x + 0.4));
+}
+
 TEST_CASE("ReachField: reset border and Direct mode", "[SmartSupports][sas-reach]")
 {
     const Params params = test_params();
