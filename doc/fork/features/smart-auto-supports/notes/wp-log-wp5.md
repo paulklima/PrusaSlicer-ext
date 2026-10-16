@@ -16,6 +16,7 @@ of the feature, including the formerly frozen headers (one header batch, below).
 | `test: phase benchmark on real meshes and 1M triangles` | hidden `[sas-reference-bench]`, `notes/timings.md` |
 | `test: robustness cases` | seven new cases (below) |
 | `docs: WP5 ...` | this log, `timings.md`, README status / how to test, plan §3.9 / §7.2 marks |
+| fix round (6 commits after `4583bac22d`) | review findings A, B, C — §9 |
 
 ## 1. Thin fronts (WP2c1a finding, fixed at the source)
 
@@ -174,6 +175,42 @@ layer, scaled / mirrored / rotated / sinking (#23), raft 2, first layer ≠ laye
 | lane 2 `PrusaSlicer` (wx 3.3, dev merged) | built and linked |
 | bare feature branch on plain 2.9.6, asserts on, GUI off (`bare-build.sh 576ca2a185`) | `libslic3r_tests "[SmartSupports]"` 60 / 28 605 passed; `fff_print_tests "[SmartSupports]"` without the upstream-asserting cross-check: 76 / 7 668 passed |
 | warnings in feature code | none (the four in the assert build are on upstream lines of `3mf.cpp`, `Print.cpp`, `TriangleSelector.cpp`) |
+
+## 9. Code review fix round (reviews A, B, C in `reviews/code-review-*.md`)
+
+| Finding | Status | What |
+|---|---|---|
+| B M1 verify() hides missing paint under placement notes | fixed | only unplaced residual (Unplaceable, BlockedByUser, WillBeDropped, TailWithoutDownwardFacets, folded trees) masks verification needs; regression: shelf over a block, nothing painted → RemainingAfterPaint 102 mm² (was 31) |
+| C M1 stale run committed as fresh | fixed | fingerprint taken at `start_job()`, finalize discards on any change of settings / instance orientation / z offset / volume matrices, `LastRun` keeps the start fingerprint; the wait never uses slices while `is_background_process_update_scheduled()` |
+| C M2 "Slicing…" hangs up to 15 min | fixed | after a 2 s grace with nothing running and posSlice not done: one reslice, then a failure; a slicer error fails at once. The decision is the pure `SmartSupportsWait::decide()` (header-only), tested in `slic3rutils_tests "[SmartSupports]"` |
+| A M1 3MF load memory, per-volume choice | fixed | sparse `(triangle, value)` storage of the fork attribute; per-triangle choice; test with an edited file |
+| A M2 scan disagrees with deserialization | fixed | tree walk with a depth counter as `TriangleSelector::has_facets()`; test with trailing data ("48", "0C8") |
+| A M3 rule / cursor survive a throw | fixed | `SmartSupports::PaintRuleScope` (RAII, `SmartSupportStates.hpp`), `select_patch()` drops a `PredicateCursor` on exit; test: a manual stroke after a cancelled smart stroke paints what it asks for |
+| A M4 `reset()` clears used_states | fixed (trivial) | stock `reset()` again; the smart scans never read used_states (plan §3.1 superseded) |
+| B m1 unpainted long-span rows as support | fixed (P3) | rows stay planned anchors and planned zones in the verification (theory §7: disabled causes stay planned); painted placements after the first row get `ReliesOnDisabledCauses`, GUI text "…(unchecked causes, long bridges)"; test |
+| B m2 no cancel in classification / tension | fixed | optional `ThrowOnCancel` in `tension_levels()` / `classify_front()` (per θ, 256 segments, 64 rows, 64k boundary samples) |
+| B m3 Clipper per long segment | fixed | bbox prefilter + C′ clipped to the strip |
+| B m4 grid memory | fixed (cap) | `grid_max_pixels` wins over `grid_res_max` (coarser grid beyond ≈ 200 × 200 mm); test. Not changed: the cluster cache keeps the last two results per cluster and the carry keeps cropped fields for the H_s window (≤ 4 M cells each now) |
+| C m1 shutdown crash | fixed | finalize and deferred calls return when `wxGetApp().plater()` is null |
+| C m2 dropped job / foreign cancel | fixed | queue only on an idle worker (`decide()` waits otherwise); no `Worker::cancel()` in `cancel_run()` |
+| C m3 stock Automatic painting pending | fixed | host `stock_autopaint_pending()`; Paint disabled with a reason |
+| C m4 marker / clip on the wrong instance | fixed (trivial) | drawn on the selected instance if it has the analysed orientation and z offset, else disabled with a tooltip |
+| C m5 empty undo step | fixed | no snapshot without smart paint in the selectors |
+| C m6 stuck consumed-click flag | fixed | cleared on every press while not busy |
+| C m7 cost for users who never open the section | fixed | no tick / config lookup / AppConfig write while closed and idle; α derived on first opening; no window widening while closed |
+
+GUI behaviour is compile-, link- and logic-tested only (no display); the host checklist (plan §7.3) covers the rest.
+
+Verification of the fix round:
+
+| Check | Result |
+|---|---|
+| `libslic3r_tests "[SmartSupports]"` | 62 test cases / 28 671 assertions passed |
+| `fff_print_tests "[SmartSupports]"` | 78 test cases / 7 708 assertions passed |
+| `slic3rutils_tests "[SmartSupports]"` (lane 2) | 1 test case / 15 assertions passed |
+| lane 2 `PrusaSlicer` | built and linked, no warnings in feature files |
+| full `libslic3r_tests` | 292 test cases: 291 passed, 1 failed as expected (arc welder `[!shouldfail]`) |
+| full `fff_print_tests` | 205 test cases / 219 580 assertions passed |
 
 ## Remaining known limitations and risks
 

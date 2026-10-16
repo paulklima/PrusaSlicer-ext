@@ -54,6 +54,7 @@ tests/fff_print/fff_print_tests "[SmartSupports]"
 tests/libslic3r/libslic3r_tests "[SmartSupports]"
 tests/fff_print/fff_print_tests "[sas-reference-bench]"     # hidden: phase timings (notes/timings.md)
 tests/fff_print/fff_print_tests "[sas-merge-calibration]"   # hidden: MayMergeOntoModel vs the slicer
+tests/slic3rutils/slic3rutils_tests "[SmartSupports]"       # GUI build: the panel's wait logic (no display)
 ```
 
 With asserts on (Debug or `-UNDEBUG`), exclude `"Reachability: real contact cross-check against
