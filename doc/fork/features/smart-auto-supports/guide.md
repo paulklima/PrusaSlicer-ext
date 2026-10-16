@@ -90,7 +90,7 @@ The existing **Automatic painting** button is unchanged. The differences:
 | Auto generated supports | off | otherwise the slicer adds support everywhere by angle |
 | Style | Organic | Smart painting predicts how organic branches grow |
 | Enforce support for the first n layers | 0 | it adds support below that height anyway |
-| Top contact Z distance | more than 0 ("Fix…" sets 0.2) | at 0 the slicer prints no bridges, and the bridge rule would not match the print |
+| Top contact Z distance | more than 0 ("Fix…" sets 0.2) | at 0 the slicer prints no bridges, so the bridges that Smart painting keeps free would not print as it expects |
 | Support on build plate only | off for "Prefer build plate", on for "Build plate only" | it must match the panel's **Placement** choice |
 
 ### The warning line and "Fix…"
@@ -183,8 +183,8 @@ Click its header to open or close it.
 |---|---|---|---|---|
 | **Paint**: Islands, Overhangs | both checked | – | Which causes get painted. Unchecked causes are still analysed and listed in the report. | Uncheck one to paint only the other kind. Switching one off never changes the other's paint. |
 | **Overhang angle** | your profile's "Overhang threshold", taken when you first open the section | 0–89°, 0 = auto | Slopes steeper than this angle (measured from horizontal) print without support. "auto" lets each layer overhang by half an extrusion width, as the slicer does (about 42° at 0.2 mm layers with a 0.4 mm nozzle). | Higher means more support. Use your printer's safe overhang angle. |
-| **Max overhang reach** | 3.0 mm | 0.5–20 mm | How far an overhang may reach, added up over the layers, before it gets support. | **Smaller means more support**, larger means less. Below about 1.5 mm (default organic settings), a note warns that painted areas may get too few branch tips. |
-| **Max bridge span** | 40 mm | 5–200 mm | The longest bridge that prints without support. Longer bridges are only reported in this version. It also limits how wide the self-holding ring around a dome opening may be (half of this value). | Raise it if your printer bridges further; lower it to see long bridges reported earlier. |
+| **Max overhang reach** | 3.0 mm | 0.5–20 mm | How far an overhang may reach, added up over the layers, before it gets support. | **Smaller means more support**, larger means less. Below about 1.5 mm (default organic settings), a note in the report warns that painted areas may get too few branch tips. |
+| **Max bridge span** | 40 mm | 5–200 mm | The longest bridge that prints without support. Longer bridges are only reported in this version. It also limits how wide the self-holding ring around a dome opening may be (half of this value). | Raise it if your printer bridges further; lower it if long bridges sag (bridges longer than the value are then reported). |
 | **Support** | Critical and likely (recommended) | Critical only, Critical and likely | Which needs get painted. *Critical*: the print would fail (islands, and overhangs that reach more than 1.5 times Max overhang reach). *Likely*: the overhang is likely to droop or curl. | "Critical only" paints less, further out on each overhang. It lists the rest as "Likely droop, not painted (Critical only)". |
 | **Placement** | Prefer build plate | Prefer build plate, Build plate only | *Prefer build plate*: support stands on the plate wherever possible, and on the model only where a part would otherwise fail. *Build plate only*: never on the model; areas that cannot reach the plate are only reported. | Use "Build plate only" if you never want marks from branches on the model. Each choice needs a matching "Support on build plate only" setting ("Fix…" sets it). |
 
@@ -195,7 +195,7 @@ Open **Advanced** for the following:
 | **Reach fade height** | 1.0 mm | 0–5 mm | How much plain material above an overhang stops it from passing its reach on. Think of stairs: if the step between two ledges is taller than this, each ledge starts fresh. If it is lower, the ledges add up like one long slope. 0 judges each layer alone; long shallow slopes then never get support. | Raise it for stepped undersides (layered hair, robes) that droop in test prints. Lower it if such steps get too much support. |
 | **Max dome opening** | 40 mm | 0–200 mm | The largest opening (longest width) of a dome, funnel or counterbore ceiling that holds itself. It counts only for a ring around a single opening; slots and ceilings with several holes are judged as overhangs or bridges. | Lower it if large dome tops sag in your prints. 0 turns this exemption off. |
 | **Accumulation angle**: "Same as overhang angle" | checked | – | When checked, the Overhang angle is used. | Uncheck it to set an angle of its own. |
-| Accumulation angle slider | 45° | 10° up to the Overhang angle | Slopes steeper than this do not add to the reach. | Lower it to tolerate long slopes that are just a little flatter than the Overhang angle, without changing the Overhang angle. |
+| Accumulation angle slider | 45° (at most the Overhang angle) | 10° up to the Overhang angle | Slopes steeper than this do not add to the reach. | Lower it to tolerate long slopes that are just a little flatter than the Overhang angle, without changing the Overhang angle. |
 | **Reset to defaults** | – | – | Resets **all** panel values. The Overhang angle is taken from your profile's "Overhang threshold" again. | |
 
 ### Buttons and lines below the fields
@@ -205,17 +205,17 @@ Open **Advanced** for the following:
 | "! 2 support settings do not match" + "Fix…" | See [section 2](#2-before-you-start). |
 | "! Instances differ in rotation: computed for instance 2" | The object has instances with different rotations; only one is analysed ([section 7](#7-working-with-your-own-paint-and-other-tools)). |
 | **Paint where needed** | Slices the object if needed and paints enforcers where support is needed. It replaces earlier smart paint and keeps your own paint. When the button is greyed out, hover over it to see why. |
-| **Remove smart paint** | Removes all smart paint and keeps your own paint. One undo step. |
+| **Remove smart paint** | Removes all smart paint and keeps your own paint. The result and the report are cleared too. One undo step. Greyed out when the object has no smart paint. |
 | "Paint a blocker to keep an area free; erased smart paint returns on the next run." | A reminder, see [section 7](#7-working-with-your-own-paint-and-other-tools). |
 | "Slicing… 3 s" / "Analysing… 42 %" + **Cancel** | A run is in progress. **Cancel** stops it and leaves the paint unchanged. |
 | "Painted 6 areas (islands 1, overhangs 5) on downward faces — press 2 for the bottom view." | The result of the last run. |
-| "Nothing needs support with these settings." | Nothing to paint, nothing to report. |
+| "Nothing needs support with these settings." | Nothing was painted and there are no problems. The report may still have notes, for example "Other objects on the plate are not considered". |
 | "Nothing was painted." | Nothing was painted, but the report lists problems. |
-| "! 4 areas (steep slopes, hanging tips) cannot be supported while Top interface layers > 0" + "Fix…" | See [section 2](#2-before-you-start). |
+| "! 4 areas (steep slopes, hanging tips) cannot be supported while Top interface layers > 0" + "Fix…" | See [section 2](#2-before-you-start). Like the result line ("Painted …", "Nothing …"), it is hidden while the result is stale. |
 | "Report: 2 problems, 5 notes" + **Show report** / **Hide report** | Opens or closes the report window. |
-| "Result is stale: the paint changed — run again." | The paint changed after the run (your painting, undo, another tool). The report may no longer match. |
+| "Result is stale: the paint changed — run again." | The paint changed after the run (your painting, undo, another tool). The report may no longer match. If the settings changed as well, only this line is shown. |
 | "Result is stale: settings changed — run again." | A panel value, a relevant print setting, or the object's rotation, scale or parts changed. Moving the object on the bed does not count. |
-| "Smart paint present — run again for the report." | The object has smart paint from an earlier session or a loaded project. The report is not saved; run again to get it. |
+| "Smart paint present — run again for the report." | The object has smart paint but no result in this session: from a loaded project, a copied object, or an undone "Remove smart paint". The report is not saved; run again to get it. |
 
 ### Messages after a failed or discarded run
 
@@ -229,6 +229,8 @@ Open **Advanced** for the following:
 | "Timed out while waiting for the slices." | Slicing took more than 15 minutes; run again. |
 | "The object or its paint changed during the analysis; the result was discarded. Run again." | Don't edit the object while the analysis runs. |
 | "The settings or the object's placement changed during the analysis; the result was discarded. Run again." | Same. |
+| "Another background task is running." | Wait until the other task has finished, then run again. |
+| Any other text | An error occurred; PrusaSlicer may also show it in a separate message. Run again. |
 
 When "Paint where needed" is greyed out, its tooltip gives the reason:
 - "Painting where needed is running.";
@@ -272,12 +274,14 @@ Paint-on supports window. It lists everything the run could not handle as planne
   - often a hint on what you can do.
 - Each table shows up to 10 rows and scrolls. Each group lists at most 50 rows; the rest are
   counted as "+N more".
+- The two notes about settings ("A raft counts as manual support", "Max overhang reach is below
+  half …") appear as plain text at the top of Notes, without a dot, height or tooltip.
 
 ### Marker and "Clip at this height"
 
-- **Click a row** to mark it in the 3D view: a yellow ring with a short line pointing down. The
-  marker is drawn through the model, so it stays visible from any side. Its size follows the
-  area. Click the row again to remove it.
+- **Click a row** with a height to mark it in the 3D view: a yellow ring with a short line pointing
+  down. The marker is drawn through the model, so it stays visible from any side. Its size follows
+  the area. Click the row again, or close the report, to remove it.
 - **"Clip at this height"** hides everything above the marker. You then see the cut through the
   object at the height where the problem starts.
   - To see the whole object again, drag the "Clipping of view" slider in the Paint-on supports
@@ -292,7 +296,7 @@ Paint-on supports window. It lists everything the run could not handle as planne
 |---|---|---|
 | "Cannot be supported from the plate" | Needs support, but no position works. The tooltip says why: "No support branch can reach this area." / "Painting here does not support this area any better." / "Too close to the bed for tree support." / the interface-layer gap. Areas that could only be supported from the model are listed here too: likely ones always, critical ones with "Build plate only". | Interface gap: use the "Fix…" line in the panel. Otherwise: choose "Prefer build plate", paint an enforcer yourself, or rotate the model. |
 | "Kept free by your blocker" (islands) | An island lies under your blocker, so it will print in mid-air. | Shrink or remove your blocker there. |
-| "Your paint here will be dropped by the slicer" | Support from **your own** enforcer cannot reach the build plate (or is too close to the bed), so the slicer removes it without telling you. | Move or remove that paint, or choose "Prefer build plate". |
+| "Your paint here will be dropped by the slicer" | Support from **your own** enforcer cannot be built here, so the slicer removes it without telling you. The tooltip says why: no branch can reach the area, it is too close to the bed, or the interface-layer gap. | Move or remove that paint. With "Build plate only", "Prefer build plate" lets branches stand on the model. Interface gap: use the "Fix…" line in the panel. |
 | "Paint does not fully cover this area" | A check after painting found a part that the actual paint does not support. | Paint an enforcer there yourself, and check the preview. |
 | "Support on the model (no plate position)" | A critical area with no position on the plate. Its support stands on the model. | Accept the marks, or rotate the model. |
 | "Support on the model may be removed (branch < 1 mm)" | The branch on the model would be shorter than 1 mm. The slicer deletes such branches silently. | Check the preview; paint by hand or rotate the model if support is missing there. |
@@ -350,12 +354,16 @@ run paints it again. To keep an area free for good, paint a **blocker** there.
 
 | Action | Undo step |
 |---|---|
-| a run that painted something | "Smart support painting" |
+| a run that changed the paint | "Smart support painting" |
 | "Remove smart paint" | "Remove smart paint" |
 | "Apply" in a "Fix…" dialog | "Apply smart support settings" |
 
-After an undo the panel says "Result is stale: the paint changed — run again." The paint itself is
-exactly the undone state.
+The paint after an undo is exactly the undone state. The panel then says:
+- after undoing a run: "Result is stale: the paint changed — run again.";
+- after undoing "Remove smart paint": "Smart paint present — run again for the report." (the
+  report is not restored);
+- after undoing "Apply": the old settings are back, and the panel shows "Result is stale:
+  settings changed — run again." if they differ from those of the last run.
 
 ### While a run is in progress
 
@@ -409,8 +417,8 @@ overhang reach, Max bridge span, Max dome opening, Reach fade height, and the fi
 (tolerated bumps, thin tips, the critical level at 1.5 times the reach). Print a test piece with
 your printer and filament, then adjust:
 - overhang edges droop or curl: lower **Max overhang reach**, or choose "Critical and likely";
-- too much support on gentle slopes: raise **Max overhang reach**, or lower the **Accumulation
-  angle**;
+- too much support on long, even slopes: raise **Max overhang reach**; if these slopes are only a
+  little flatter than the Overhang angle, lower the **Accumulation angle** instead;
 - dome tops sag: lower **Max dome opening**;
 - bridges sag: lower **Max bridge span**, and support the reported long bridges yourself.
 
