@@ -514,8 +514,23 @@ TEST_CASE("Reference #8: dome R 30 / 35 with B_ceil 20, one ring at hole r 11.9"
     }
     std::cout << "#8: placements at hole r " << hole_r.front() << " … " << hole_r.back() << ", first level " << level_name(r.result.placements.front().level)
               << ", layers " << placement_layers(r.result).size() << std::endl;
+    // Settled (WP5): theory's 11.9 is where the continuous reach of the ceiling, c(r) = R√2 − r − √(R² − r²) (R 30, from the
+    // 45° ring inwards, no hoop credit while Feret(H) = 2r > B_ceil), reaches K_max = 3 (r* = 11.88). The slices step the
+    // hole radius by ≈ 0.46 mm per layer here: the first need is on the first layer whose hole edge passes r*, i.e. hole r
+    // 11.52 (c 3.21) after 11.98 (c 2.94). So: the first placement is the first layer with c(hole r) > K_max, ± one layer
+    // step of the plan's 11.9.
+    auto c_dome = [](double R, double rh) { return R * std::sqrt(2.) - rh - std::sqrt(R * R - rh * rh); };
+    const uint32_t first = r.result.placements.front().layer;
+    REQUIRE(r.input.layers[first - 1].lslices.size() == 1);
+    REQUIRE(r.input.layers[first - 1].lslices.front().holes.size() == 1);
+    const double hole_prev = std::sqrt(std::abs(r.input.layers[first - 1].lslices.front().holes.front().area()) / M_PI) * SCALING_FACTOR;
+    std::cout << "#8: c(hole r) of the first placement layer " << c_dome(30., hole_r.front()) << ", of the layer below " << c_dome(30., hole_prev) << std::endl;
+    CHECK(c_dome(30., hole_r.front()) > up.K_max);
+    CHECK(c_dome(30., hole_prev) < up.K_max + 0.02);
     CHECK(hole_r.front() == Approx(11.9).margin(0.5));
     CHECK(r.result.placements.front().level == Level::Should);
+    // One ring: the support resets c, and the rings below r 10 are hoop bands (Feret ≤ 20).
+    CHECK(placement_layers(r.result).size() == 1);
     for (double hr : hole_r)
         CHECK(hr >= 9.8);
 }
@@ -543,13 +558,19 @@ TEST_CASE("Reference #9: horizontal holes Ø8 / Ø20 / Ø50: none / none at 0.2 
         CHECK(top == Level::Should);
     }
     {
-        // Ø50: c reaches 8.3 without support (must). The joint plan places the should band where c first exceeds K_max
-        // and the chain restarts from it, so with "critical and likely" the placements are should; with "critical only"
-        // the should band is not planned and the must zone is placed.
+        // Ø50, settled (WP5): theory's "must" (c up to 10.4, sliced 8.3) is the level of the need WITHOUT support. The
+        // joint plan works bottom up (theory §6): the first layer with c > K_max is a should band, its placement resets c
+        // (support anchors pass ĉ = 0, §2.3), and the chain restarts from it, so with "critical and likely" every
+        // placement is should and c never reaches f_hard·K_max - exactly as on the sphere (#11, should rings). With
+        // "critical only" the should needs are reported (BelowLowestLevel), add no anchors, and the must zone is placed.
+        // The plan's "must" holds for the unsupported need and for "critical only". Theory's "usually unreachable": this
+        // block is 20 deep, the branches leave the hole through its open ends (no problems).
         const SasPrint &sp = cached_print("hole_50", [] { return hole_block(50., 70., 20., 70.); }, sas_config());
         const SasRun    r  = run_ref("#9 hole Ø50", sp);
         REQUIRE(! r.result.placements.empty());
         CHECK(problems(r.result) == 0);
+        for (const Placement &pl : r.result.placements)
+            CHECK(pl.level == Level::Should);
         UserParams up = ref_params();
         up.lowest_level = Level::Must;
         const SasRun rm = run_ref("#9 hole Ø50, critical only", sp, up);
@@ -567,6 +588,10 @@ TEST_CASE("Reference #10: T on an 80 x 80 base: on the model (prefer plate) / un
 {
     const SasPrint &sp = cached_print("t_shape_on_80x80", [] { return t_shape(15., 10., 10., 20., 2., 80.); }, sas_config());
     {
+        // Settled (WP5): the plan's "plus Unplaceable should bands c ∈ (3, 3.7]" (§3.9 #10 note) measures c from the stem
+        // only. The on-model must zone (c > 4.5) is built (branches 20 mm high), its contact reaches tip_d = 0.8 towards
+        // the stem (c 3.7), and it is a support anchor with ĉ = 0 (theory §2.2, §2.3): the band between stem and contact
+        // has c = min(distance to the stem, distance to the contact) ≤ 1.9 < K_max. Nothing remains to report.
         const SasRun r = run_ref("#10 T on base, prefer plate", sp);
         REQUIRE(! r.result.placements.empty());
         for (const Placement &pl : r.result.placements) {
@@ -574,6 +599,7 @@ TEST_CASE("Reference #10: T on an 80 x 80 base: on the model (prefer plate) / un
             CHECK(pl.level == Level::Must);
         }
         CHECK(rows_with(r.result, ReportState::OnModelFallback) + rows_with(r.result, ReportState::OnModelTooShort) >= 1);
+        CHECK(rows_with(r.result, ReportState::Unplaceable) == 0);
     }
     {
         UserParams up = ref_params();
