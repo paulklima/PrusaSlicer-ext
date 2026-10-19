@@ -1,12 +1,12 @@
 ---
 id: smart-auto-supports
 kind: feature
-title: Smart automatic support painting (geometric island / bridge / cantilever detection)
+title: Support planner (layer analysis for paint-on supports: islands, overhangs, bridges)
 show: false
 upstream_pr: none
 ---
 
-# feature/smart-auto-supports — smart automatic support painting
+# feature/smart-auto-supports — support planner (layer analysis for paint-on supports)
 
 ## What / why
 
@@ -29,12 +29,12 @@ All work packages are integrated; unit and reference tests pass, also with asser
 plan §8; their progress and deviations are in `notes/wp-log*.md`, the integration results and
 the known limitations in `notes/wp-log-wp5.md`.
 
-v1 scope (plan §0): a "Paint where needed" section at the end of the paint-on supports gizmo.
-It paints support enforcers for islands and overhangs (cantilevers) only where the slicer's
-own tree contact would support them; bridges and hoop bands (domes, funnels, counterbores) are
-exempt, long bridges are planned and reported but not painted. Smart paint is stored as
-TriangleSelector states 3–9 (the slicer treats them as enforcers), never overwrites manual
-paint, and is baked to plain enforcers in 3MF for stock PrusaSlicer.
+v1 scope (plan §0): a "Support planner (layer analysis)" section at the end of the paint-on
+supports gizmo. It paints support enforcers for islands and overhangs (cantilevers) only where
+the slicer's own tree contact would support them; bridges and hoop bands (domes, funnels,
+counterbores) are exempt, long bridges are planned and reported but not painted. Planned support
+is stored as TriangleSelector states 3–9 (the slicer treats them as enforcers), never overwrites
+manual paint, and is baked to plain enforcers in 3MF for stock PrusaSlicer.
 
 ## Files touched
 
@@ -65,26 +65,26 @@ enforcers (upstream, `notes/wp-log-wp5.md`):
 **On the host** (after the sandbox build passes; full checklist in plan §7.3):
 - Panel: fields and collapse state persist; the gizmo window stays on the canvas at
   1366×768 / 1920×1080, 100 % / 150 %, and scrolls; the report window sits right of it.
-- T-shape: Paint → "Slicing…" → "Analysing… %" → cyan paint beyond ~2.5 mm; one undo removes
-  it. Hollow dome: nothing painted (Automatic painting paints its top).
+- T-shape: Analyse and paint → "Slicing…" → "Analysing layers… %" → cyan paint beyond ~2.5 mm;
+  one undo removes it. Hollow dome: nothing painted (Automatic painting paints its top).
 - Manual paint: enforcers and blockers stay, nothing is painted inside a blocker ("Kept free
-  by your blocker"); unchecking a cause and running again removes its paint; "Remove smart
-  paint" keeps manual paint.
+  by your blocker"); unchecking a cause and running again removes its paint; "Remove planned
+  support" keeps manual paint.
 - Plate policy: T on a wide base — Prefer build plate paints with "Support on the model",
   Build plate only paints nothing and lists problems.
 - Contract: pre-run warnings for support off / auto on / grid style, none for interface
   layers; with interface layers 3 a 40° wall shows the after-run "Fix…" line with its side
   effects; "Apply and paint" uses the new config; undo reverts.
-- Preview: organic tips on the plate under smart paint; on-model tips only where reported.
-- 3MF: reopened in the fork keeps the colours ("run again for the report"); stock PrusaSlicer
+- Preview: organic tips on the plate under planned support; on-model tips only where reported.
+- 3MF: reopened in the fork keeps the colours ("analyse again for the report"); stock PrusaSlicer
   2.9.x shows blue enforcers, same support, no crash.
-- Robustness: smart fill / Triangles brush over smart paint; cancel while slicing and
+- Robustness: Smart fill / Triangles brush over planned support; cancel while slicing and
   analysing; closing the gizmo, switching or deleting objects, loading a project or quitting
   during analysis; brush and buttons disabled while busy; background processing on and off.
 - Variants: object on bed 2, instances with different rotations, non-printable instance,
   multi-part objects with modifiers / negative volumes / enforcer and blocker volumes,
   scaled / mirrored / rotated objects, raft, variable layer height, first layer ≠ layer
-  height; copy/paste, split, Cut, Simplify; "Automatic painting" after a smart run.
+  height; copy/paste, split, Cut, Simplify; "Automatic painting" after a planner run.
 - Report row → marker at the right place; "Clip at this height".
 - A ~1M-triangle figurine: run time, paint and 3MF size, undo memory, brush FPS.
 - Language switch, colour-blindness palette check, dev build (wx 3.3, Wayland).
@@ -101,6 +101,7 @@ add nothing on this topic (`notes/theory.md` §12).
 |---|---|---|
 | version_2.9.6 | concept | started 2026-10-13 |
 | version_2.9.6 | implement v1 | theory reviewed and amended, plan reviewed in three rounds; started 2026-10-15 |
+| version_2.9.6 | rename in the UI | "Smart painting" → "Support planner (layer analysis)", "smart paint" → "planned support", clearer field names (2026-10-19): "smart" is taken by upstream's Smart fill; id, branch and code names unchanged |
 
 ## Notes
 
