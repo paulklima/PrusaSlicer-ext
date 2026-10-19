@@ -172,8 +172,8 @@ std::string cause_name(SS::Cause cause)
 std::string level_name(SS::Level level)
 {
     switch (level) {
-    case SS::Level::Must:   return _u8L("critical");
-    case SS::Level::Should: return _u8L("likely");
+    case SS::Level::Must:   return _u8L("would fail");
+    case SS::Level::Should: return _u8L("may droop");
     default:                return _u8L("possible");
     }
 }
@@ -190,11 +190,11 @@ std::string state_text(const SS::ReportEntry &e, size_t analysed_instance)
     case RS::OnModelTooShort:           return _u8L("Support on the model may be removed (branch < 1 mm)");
     case RS::MayMergeOntoModel:         return _u8L("Plate support may merge onto the model");
     case RS::PartlyOnModel:             return _u8L("Some tips of this area stand on the model");
-    case RS::BelowLowestLevel:          return _u8L("Likely droop, not painted (Critical only)");
+    case RS::BelowLowestLevel:          return _u8L("May droop, not painted (Paint: where it would fail)");
     case RS::LongSpanNotPainted:        return _u8L("Long bridge, not painted in this version");
     case RS::CauseDisabled:             return e.cause == SS::Cause::Island ? _u8L("Islands not painted (unchecked)") :
                                                                               _u8L("Overhangs not painted (unchecked)");
-    case RS::ReliesOnDisabledCauses:    return _u8L("Painted areas rely on unpainted planned support (unchecked causes, long bridges)");
+    case RS::ReliesOnDisabledCauses:    return _u8L("Painted areas rely on support that was not painted (unchecked causes, long bridges)");
     case RS::TailWithoutDownwardFacets: return _u8L("Thin hanging part without downward faces");
     case RS::SeveralPrintObjects:       return format(_u8L("Computed for instance %1% only"), analysed_instance + 1);
     case RS::OtherObjectsNotConsidered: return _u8L("Other objects on the plate are not considered");
@@ -221,8 +221,8 @@ std::string advice_text(const SS::ReportEntry &e)
     case RS::BlockedByUser:      return _u8L("Shrink or remove your blocker here if this area should be supported.");
     case RS::WillBeDropped:      return _u8L("Support from this paint cannot reach the build plate, so the slicer removes it.");
     case RS::OnModelFallback:    return _u8L("No position on the build plate supports this area; support stands on the model.");
-    case RS::BelowLowestLevel:   return _u8L("Choose \"Critical and likely\" to paint these areas too.");
-    case RS::CauseDisabled:      return _u8L("Check the cause under Paint to paint these areas.");
+    case RS::BelowLowestLevel:   return _u8L("Choose \"Also where it may droop\" under Paint to paint these areas too.");
+    case RS::CauseDisabled:      return _u8L("Check the cause under \"Support for\" to paint these areas.");
     case RS::HangsFromUnplacedIsland:
         return _u8L("This part grows from an island listed under Problems; it is supported only if that island is.");
     default:                     return {};
@@ -387,7 +387,7 @@ public:
     enum class Kind { Fix, Gate };
 
     SmartSupportsDialog(wxWindow *parent, const wxString &headline, const wxString &body, Kind kind, bool can_apply)
-        : MsgDialog(parent, _L("Paint where needed"), headline, wxICON_WARNING)
+        : MsgDialog(parent, _L("Support planner"), headline, wxICON_WARNING)
     {
         auto *text = new wxStaticText(this, wxID_ANY, body);
         text->Wrap(CONTENT_WIDTH * wxGetApp().em_unit());
@@ -632,7 +632,7 @@ bool SmartSupportsPanel::can_start(std::string *why_not) const
     if (mo == nullptr)
         return fail({});
     if (busy())
-        return fail(_u8L("Painting where needed is running."));
+        return fail(_u8L("The support planner is running."));
     if (! wxGetApp().plater()->get_ui_job_worker().is_idle())
         return fail(_u8L("Another background task is running."));
     // Its backend result would overwrite the smart paint, our reslice would replace its task (review C m3).
@@ -681,7 +681,7 @@ void SmartSupportsPanel::start_run()
         s_multiple_beds.set_active_bed(it->second);
 
     if (const std::string err = plater->active_fff_print().validate(); ! err.empty()) {
-        set_failed(_u8L("Painting where needed requires a valid print setup.") + " " + err);
+        set_failed(_u8L("The support planner needs a valid print setup.") + " " + err);
         return;
     }
 
@@ -717,7 +717,7 @@ void SmartSupportsPanel::request_reslice()
         // The reslice applied the current model and config: an invalid print would never be sliced.
         if (const std::string err = plater->active_fff_print().validate(); ! err.empty()) {
             p.cancel_run();
-            p.set_failed(_u8L("Painting where needed requires a valid print setup.") + " " + err);
+            p.set_failed(_u8L("The support planner needs a valid print setup.") + " " + err);
             return;
         }
         p.m_reslice_requested = true;
@@ -784,11 +784,11 @@ void SmartSupportsPanel::poll_waiting()
         return;
     case W::Action::FailSlicing:
         cancel_run();
-        set_failed(_u8L("Slicing failed, see the slicing notification. Fix it and run again."));
+        set_failed(_u8L("Slicing failed, see the slicing notification. Fix it and analyse again."));
         return;
     case W::Action::FailInterrupted:
         cancel_run();
-        set_failed(_u8L("Slicing was interrupted (the object or the settings changed). Run again."));
+        set_failed(_u8L("Slicing was interrupted (the object or the settings changed). Analyse again."));
         return;
     }
 }
@@ -816,7 +816,7 @@ void SmartSupportsPanel::start_job(const PrintObject &po, ModelObject &mo, size_
     m_job       = std::make_shared<JobShared>();
     const bool        fake   = fake_mode();
     m_run_fake               = fake;
-    const std::string status = _u8L("Painting supports where needed");   // translated on the UI thread
+    const std::string status = _u8L("Analysing layers for support");   // translated on the UI thread
     const uint64_t    run_id = m_run_id;
     std::weak_ptr<int> alive = m_alive;
 
@@ -913,7 +913,7 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
     }
     if (! ok) {
         m_state   = State::Idle;
-        m_message = _u8L("The object or its paint changed during the analysis; the result was discarded. Run again.");
+        m_message = _u8L("The object or its paint changed during the analysis; the result was discarded. Analyse again.");
         m_host.request_redraw();
         return;
     }
@@ -922,7 +922,7 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
     update_effective_config(true);
     if (! m_eff.valid || SS::config_fingerprint(m_eff.full, *mo, input->analysed_instance_idx, input->params.user) != fp_start) {
         m_state   = State::Idle;
-        m_message = _u8L("The settings or the object's placement changed during the analysis; the result was discarded. Run again.");
+        m_message = _u8L("The settings or the object's placement changed during the analysis; the result was discarded. Analyse again.");
         m_host.request_redraw();
         return;
     }
@@ -935,7 +935,7 @@ void SmartSupportsPanel::finalize_job(uint64_t run_id, bool canceled, std::excep
             changed = true;
         }
     if (changed)
-        m_host.commit_paint(_L("Smart support painting"));
+        m_host.commit_paint(_L("Planned support"));
 
     LastRun lr;
     lr.mo_id             = mo->id();
@@ -1000,7 +1000,7 @@ void SmartSupportsPanel::remove_smart_paint()
             any = true;
         }
     if (any)
-        m_host.commit_paint(_L("Remove smart paint"));
+        m_host.commit_paint(_L("Remove planned support"));
     m_last_runs.erase(mo->id().id);
     m_selected_entry.reset();
     m_state = State::Idle;
@@ -1026,7 +1026,7 @@ void SmartSupportsPanel::apply_changes(bool include_advisory)
     if (changes_for(include_advisory).empty())
         return;
     {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), _L("Apply smart support settings"));
+        Plater::TakeSnapshot snapshot(wxGetApp().plater(), _L("Support planner settings"));
         try {
             SS::apply_recommended(mo->config, m_eff.object, m_up.plate_policy, include_advisory);
         } catch (const std::exception &ex) {
@@ -1066,7 +1066,7 @@ void SmartSupportsPanel::show_fix_dialog(bool include_advisory)
     }
     const wxString headline = include_advisory ?
         _L("Top interface layers keep support away from steep slopes and hanging tips.") :
-        _L("Some support settings do not match what painting where needed assumes.");
+        _L("Some support settings do not match what the support planner assumes.");
 
     SmartSupportsDialog dlg(wxGetApp().plater(), headline, from_u8(body), SmartSupportsDialog::Kind::Fix, ! changes.empty());
     const int res = dlg.ShowModal();
@@ -1101,7 +1101,7 @@ void SmartSupportsPanel::show_gate_dialog()
     body += "\n" + _u8L("\"Paint anyway\" paints with the current settings; the slicer may then ignore or change the painted support.");
 
     const size_t mo_id = mo->id().id;
-    SmartSupportsDialog dlg(wxGetApp().plater(), _L("Some support settings do not match what painting where needed assumes."),
+    SmartSupportsDialog dlg(wxGetApp().plater(), _L("Some support settings do not match what the support planner assumes."),
                             from_u8(body), SmartSupportsDialog::Kind::Gate, ! changes.empty());
     const int res = dlg.ShowModal();
     if (res == wxID_YES) {
@@ -1117,7 +1117,7 @@ void SmartSupportsPanel::show_gate_dialog()
 
 namespace {
 
-std::string entry_label()    { return _u8L("Paint where needed") + " »"; }
+std::string entry_label()    { return _u8L("Support planner") + " »"; }
 std::string degree_suffix()
 {
     // Same msgid and context as the angle slider of the gizmo.
@@ -1130,9 +1130,9 @@ std::string degree_suffix()
 float SmartSupportsPanel::label_column_width() const
 {
     float w = 0.f;
-    for (const std::string &s : { _u8L("Paint"), _u8L("Overhang angle"), _u8L("Max overhang reach"), _u8L("Max bridge span"),
-                                  _u8L("Support"), _u8L("Placement"), _u8L("Reach fade height"), _u8L("Max dome opening"),
-                                  _u8L("Accumulation angle") })
+    for (const std::string &s : { _u8L("Support for"), _u8L("Self-supporting angle"), _u8L("Max overhang reach"), _u8L("Max bridge span"),
+                                  _u8L("Paint"), _u8L("Placement"), _u8L("Reach reset height"), _u8L("Max dome opening"),
+                                  _u8L("Reach counts below") })
         w = std::max(w, ImGuiPureWrap::calc_text_size(s).x);
     return w + wxGetApp().imgui()->scaled(1.f);
 }
@@ -1155,7 +1155,7 @@ void SmartSupportsPanel::render_entry_line()
         m_host.request_redraw();
     }
     if (ImGui::IsItemHovered())
-        tooltip(_u8L("Opens the \"Paint where needed\" section at the end of this window."));
+        tooltip(_u8L("Opens the support planner at the end of this window."));
 }
 
 float SmartSupportsPanel::required_width() const
@@ -1173,9 +1173,9 @@ float SmartSupportsPanel::required_width() const
     float w = labels + wxGetApp().imgui()->scaled(6.f) + ImGuiPureWrap::get_slider_icon_size().x;
     w = std::max(w, labels + checkbox_w(_u8L("Islands")) + spacing + checkbox_w(_u8L("Overhangs")));
     w = std::max(w, labels + checkbox_w(_u8L("Prefer build plate")) + spacing + checkbox_w(_u8L("Build plate only")));
-    w = std::max(w, labels + text_w(_u8L("Critical and likely (recommended)")) + frame + 2.f * style.FramePadding.x);
-    w = std::max(w, labels + checkbox_w(_u8L("Same as overhang angle")));
-    w = std::max(w, button_w(_u8L("Paint where needed")) + spacing + button_w(_u8L("Remove smart paint")));
+    w = std::max(w, labels + text_w(_u8L("Also where it may droop (recommended)")) + frame + 2.f * style.FramePadding.x);
+    w = std::max(w, labels + checkbox_w(_u8L("the self-supporting angle")));
+    w = std::max(w, button_w(_u8L("Analyse and paint")) + spacing + button_w(_u8L("Remove planned support")));
     return w;
 }
 
@@ -1192,10 +1192,11 @@ void SmartSupportsPanel::render_section(float window_width)
 
     ImGui::Separator();
     ImGui::SetNextItemOpen(m_section_open, ImGuiCond_Always);
-    const bool open = ImGui::CollapsingHeader((_u8L("Paint where needed (geometric)") + "##sas_section").c_str());
+    const bool open = ImGui::CollapsingHeader((_u8L("Support planner (layer analysis)") + "##sas_section").c_str());
     if (ImGui::IsItemHovered())
-        tooltip(_u8L("Paints support only where it is really needed, from the layer slices. Unlike Automatic painting "
-                     "it keeps domes and short bridges free and keeps your own paint."));
+        tooltip(_u8L("Analyses the sliced layers and plans support only where the print needs it: islands, and overhangs "
+                     "that would fail or droop. Unlike Automatic painting it keeps domes and short bridges free and keeps "
+                     "your own paint."));
     if (m_scroll_to_section) {
         ImGui::SetScrollHereY(0.f);
         m_scroll_to_section = false;
@@ -1224,8 +1225,8 @@ void SmartSupportsPanel::render_section(float window_width)
     };
     const std::string mm = " " + _u8L("mm");
 
-    // Paint: [x] Islands [x] Overhangs
-    label(_u8L("Paint"));
+    // Support for: [x] Islands [x] Overhangs
+    label(_u8L("Support for"));
     bool islands   = (m_up.paint_causes & SS::cbIsland) != 0;
     bool overhangs = (m_up.paint_causes & SS::cbCantilever) != 0;
     if (ImGuiPureWrap::checkbox(_u8L("Islands"), islands))
@@ -1240,13 +1241,13 @@ void SmartSupportsPanel::render_section(float window_width)
                      "(the reach adds up over the layers)."));
     m_up.paint_causes = uint8_t((islands ? SS::cbIsland : 0) | (overhangs ? SS::cbCantilever : 0));
 
-    // Overhang angle, 0 = auto
-    label(_u8L("Overhang angle"));
+    // Self-supporting angle (α), 0 = auto
+    label(_u8L("Self-supporting angle"));
     float alpha = float(m_up.alpha_deg);
     if (slider("##sas_alpha", alpha, 0.f, 89.f, m_up.alpha_deg == 0 ? _u8L("auto") : "%.0f" + degree_suffix(),
                _u8L("Slopes steeper than this angle (from horizontal) print without support. "
                     "0 = automatic (half an extrusion width per layer). "
-                    "Default 45°: 10° safer than the MK4S profiles' 35°."))) {
+                    "Default 45°: 10° safer than the Overhang threshold of the MK4S profiles (35°)."))) {
         m_up.alpha_deg = int(std::lround(std::clamp(alpha, 0.f, 89.f)));
         changed = true;
     }
@@ -1270,10 +1271,10 @@ void SmartSupportsPanel::render_section(float window_width)
         changed = true;
     }
 
-    // Support level (D9)
-    label(_u8L("Support"));
+    // Paint level (D9)
+    label(_u8L("Paint"));
     {
-        const std::array<std::string, 2> levels { _u8L("Critical only"), _u8L("Critical and likely (recommended)") };
+        const std::array<std::string, 2> levels { _u8L("Where it would fail"), _u8L("Also where it may droop (recommended)") };
         const std::array<std::string, 2> tips   { _u8L("Only where the print would fail."),
                                                   _u8L("Also where the print is likely to droop or curl.") };
         const int sel = m_up.lowest_level == SS::Level::Must ? 0 : 1;
@@ -1313,7 +1314,7 @@ void SmartSupportsPanel::render_section(float window_width)
 
     // Advanced (no tree indentation, so the label column stays aligned)
     if (ImGui::TreeNodeEx((_u8L("Advanced") + "##sas_advanced").c_str(), ImGuiTreeNodeFlags_NoTreePushOnOpen)) {
-        label(_u8L("Reach fade height"));
+        label(_u8L("Reach reset height"));
         float h_s = float(m_up.H_s);
         if (slider("##sas_h_s", h_s, 0.f, 5.f, "%.1f" + mm,
                    _u8L("Height of plain material above an overhang after which it no longer passes its reach on (stairs). "
@@ -1330,9 +1331,9 @@ void SmartSupportsPanel::render_section(float window_width)
             changed = true;
         }
         const std::string beta_tip = _u8L("Slopes steeper than this do not add to the reach. Lower it to tolerate long "
-                                          "slopes just below the overhang angle.");
-        label(_u8L("Accumulation angle"));
-        if (ImGuiPureWrap::checkbox(_u8L("Same as overhang angle"), m_up.beta_equals_alpha))
+                                          "slopes just below the self-supporting angle.");
+        label(_u8L("Reach counts below"));
+        if (ImGuiPureWrap::checkbox(_u8L("the self-supporting angle"), m_up.beta_equals_alpha))
             changed = true;
         if (ImGui::IsItemHovered())
             tooltip(beta_tip);
@@ -1403,7 +1404,7 @@ void SmartSupportsPanel::render_section(float window_width)
             cancel_run();
     } else if (m_state == State::Analysing) {
         const int pct = m_job ? m_job->progress.load() : 0;
-        const std::string overlay = format(_u8L("Analysing… %1% %%"), pct);
+        const std::string overlay = format(_u8L("Analysing layers… %1% %%"), pct);
         const float cancel_w = ImGuiPureWrap::calc_button_size(_u8L("Cancel")).x;
         ImGui::ProgressBar(float(pct) / 100.f, ImVec2(std::max(imgui.scaled(4.f), window_width - cancel_w - ImGui::GetStyle().ItemSpacing.x), 0.f),
                            overlay.c_str());
@@ -1414,22 +1415,23 @@ void SmartSupportsPanel::render_section(float window_width)
         std::string why_not;
         const bool can = can_start(&why_not);
         imgui.disabled_begin(! can);
-        if (ImGuiPureWrap::button(_u8L("Paint where needed") + "##sas_paint"))
+        if (ImGuiPureWrap::button(_u8L("Analyse and paint") + "##sas_paint"))
             on_paint_clicked();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             tooltip(can || why_not.empty() ?
-                    _u8L("Slices the object if needed and paints enforcers where support is needed. Replaces earlier smart paint; "
-                         "your own paint is kept. Painting over smart paint by hand turns it into your own paint.") : why_not);
+                    _u8L("Slices the object if needed, analyses its layers and paints enforcers where support is needed. Replaces "
+                         "earlier planned support; your own paint is kept. Painting over planned support by hand turns it "
+                         "into your own paint.") : why_not);
         imgui.disabled_end();
         ImGui::SameLine();
         imgui.disabled_begin(! m_poll.has_smart_paint);
-        if (ImGuiPureWrap::button(_u8L("Remove smart paint") + "##sas_remove"))
+        if (ImGuiPureWrap::button(_u8L("Remove planned support") + "##sas_remove"))
             remove_smart_paint();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            tooltip(_u8L("Removes all smart paint. Your own paint is kept."));
+            tooltip(_u8L("Removes all planned support. Your own paint is kept."));
         imgui.disabled_end();
     }
-    text_wrapped_colored(ColGrey, _u8L("Paint a blocker to keep an area free; erased smart paint returns on the next run."), window_width);
+    text_wrapped_colored(ColGrey, _u8L("Paint a blocker to keep an area free; erased planned support returns on the next run."), window_width);
 
     // Result
     const LastRun *lr = current_last_run();
@@ -1440,7 +1442,7 @@ void SmartSupportsPanel::render_section(float window_width)
 
     if (lr == nullptr) {
         if (m_poll.has_smart_paint && ! busy())
-            text_wrapped_colored(ColGrey, _u8L("Smart paint present — run again for the report."), window_width);
+            text_wrapped_colored(ColGrey, _u8L("Planned support present — analyse again for the report."), window_width);
         return;
     }
 
@@ -1450,9 +1452,9 @@ void SmartSupportsPanel::render_section(float window_width)
     notes += int(lr->advisory.size());
 
     if (m_poll.stale_paint)
-        text_wrapped_colored(ImGuiPureWrap::COL_ORANGE_LIGHT, _u8L("Result is stale: the paint changed — run again."), window_width);
+        text_wrapped_colored(ImGuiPureWrap::COL_ORANGE_LIGHT, _u8L("Result is stale: the paint changed — analyse again."), window_width);
     else if (m_poll.stale_config)
-        text_wrapped_colored(ImGuiPureWrap::COL_ORANGE_LIGHT, _u8L("Result is stale: settings changed — run again."), window_width);
+        text_wrapped_colored(ImGuiPureWrap::COL_ORANGE_LIGHT, _u8L("Result is stale: settings changed — analyse again."), window_width);
     else {
         const int total = lr->painted_areas[0] + lr->painted_areas[1] + lr->painted_areas[2];
         if (total > 0)
@@ -1516,7 +1518,7 @@ void SmartSupportsPanel::render_report_window(float x, float y, float bottom_lim
     ImGuiPureWrap::set_next_window_pos(x, y, ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0.f, 0.f), ImVec2(FLT_MAX, max_h));
     bool keep_open = true;
-    ImGuiPureWrap::begin(_u8L("Smart support report"), &keep_open,
+    ImGuiPureWrap::begin(_u8L("Support plan"), &keep_open,
                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
     const bool has_row    = m_selected_entry && *m_selected_entry < lr->report.size() && lr->report[*m_selected_entry].area_mm2 > 0.;
@@ -1610,7 +1612,7 @@ void SmartSupportsPanel::render_report_group(const LastRun &lr, bool problems, c
                     }
                     if (e.count > 1 && e.state != SS::ReportState::SeveralPrintObjects)
                         tip += "\n" + format(_u8L("%1% areas merged"), e.count);
-                    tip += "\n" + format(_u8L("Cause: %1%, level: %2%"), cause_name(e.cause), level_name(e.level));
+                    tip += "\n" + format(_u8L("Cause: %1% — %2%"), cause_name(e.cause), level_name(e.level));
                     if (const std::string advice = advice_text(e); ! advice.empty())
                         tip += "\n\n" + advice;
                     tooltip(tip);
