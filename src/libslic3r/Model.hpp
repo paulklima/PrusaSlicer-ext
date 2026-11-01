@@ -700,6 +700,20 @@ public:
     bool has_facets(const ModelVolume &mv, TriangleStateType type) const;
     bool empty() const { return m_data.triangles_to_split.empty(); }
 
+    // Fork (smart support painting, see Support/SmartSupportStates.hpp):
+    // Facets at any of the given states with a single deserialization, e.g. SmartSupports::enforcer_like_states().
+    indexed_triangle_set get_facets_strict(const ModelVolume &mv, const std::vector<TriangleStateType> &states) const;
+    // Any ENFORCER or auto (3..9) leaf? Bitstream scan, no deserialization.
+    bool has_enforcer_like_facets() const;
+    // Any auto (3..9) leaf? Bitstream scan, no deserialization.
+    bool has_auto_states() const;
+    // Copy of the data with all auto states (3..9) remapped to ENFORCER, readable by stock PrusaSlicer.
+    TriangleSelector::TriangleSplittingData get_data_auto_baked(const ModelVolume &mv) const;
+    // Serialize one triangle of the given data into the 3MF hex string of get_triangle_as_string(). Linear time.
+    static std::string triangle_as_string(const TriangleSelector::TriangleSplittingData &data, int triangle_idx);
+    // Same subdivision trees and leaf states; used_states are ignored.
+    static bool same_paint(const TriangleSelector::TriangleSplittingData &a, const TriangleSelector::TriangleSplittingData &b);
+
     // Following method clears the config and increases its timestamp, so the deleted
     // state is considered changed from perspective of the undo/redo stack.
     void reset();

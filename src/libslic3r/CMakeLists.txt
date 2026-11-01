@@ -381,6 +381,21 @@ set(SLIC3R_SOURCES
     Support/SupportParameters.hpp
     Support/OrganicSupport.cpp
     Support/OrganicSupport.hpp
+    Support/SmartSupportStates.hpp
+    Support/SmartSupports.cpp
+    Support/SmartSupports.hpp
+    Support/SmartSupportsBase.cpp
+    Support/SmartSupportsEval.cpp
+    Support/SmartSupportsInput.cpp
+    Support/SmartSupportsInternal.hpp
+    Support/SmartSupportsPaint.cpp
+    Support/SmartSupportsPlan.cpp
+    Support/SmartSupportsProjection.cpp
+    Support/SmartSupportsRaster.cpp
+    Support/SmartSupportsReach.cpp
+    Support/SmartSupportsReachability.cpp
+    Support/SmartSupportsReport.cpp
+    Support/SmartSupportsTension.cpp
     Support/TreeSupport.cpp
     Support/TreeSupport.hpp
     Support/TreeSupportCommon.cpp
