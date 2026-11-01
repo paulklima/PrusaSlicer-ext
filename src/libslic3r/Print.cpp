@@ -707,8 +707,9 @@ std::string Print::validate(std::vector<std::string>* warnings) const
             // Notify the user in that case.
             if (! object->has_support() && warnings) {
                 for (const ModelVolume* mv : object->model_object()->volumes) {
+                    // Smart support paint (states 3..9) acts as support enforcers as well.
                     bool has_enforcers = mv->is_support_enforcer() || 
-                        (mv->is_model_part() && mv->supported_facets.has_facets(*mv, TriangleStateType::ENFORCER));
+                        (mv->is_model_part() && mv->supported_facets.has_enforcer_like_facets());
                     if (has_enforcers) {
                         warnings->emplace_back("_SUPPORTS_OFF");
                         break;

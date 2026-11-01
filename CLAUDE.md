@@ -16,7 +16,9 @@ What the fork adds is **not listed here** — every feature/fix has its own fold
 
 ## Fork workflow rules (binding for agents)
 
-- Work only on `feature/<id>` or `fix/<id>`, based on the upstream tag (`version_X.Y.Z`).
+- Work only on `feature/<id>` or `fix/<id>`, based on the newest release tag of the line
+  (`v<upstream>+ext-v…`, so `make` works on the branch; the upstream tag `version_X.Y.Z` only
+  while the line has no release). Never base a branch on `dev/*`.
   **Ask the user** before creating one (feature or fix? which `<id>`?) and before merging,
   removing or archiving any branch.
 - One feature = one capability with everything it needs (code, docs, tooling, display) —
@@ -25,10 +27,12 @@ What the fork adds is **not listed here** — every feature/fix has its own fold
   `id kind title show upstream_pr`). Plans, reviews, notes go into that folder only.
 - Testing happens on `dev/<upstream>`: merge the feature there with `git merge --no-ff`, the
   user builds and tests. **Any change request = test failed**: fix on the feature branch,
-  merge into `dev` again.
+  merge into `dev` again. `dev/<upstream>` serves all releases on that base (no new branch per
+  release); it is pushed only with a release, so unreleased merges can still be reset away.
 - **`fork/<upstream>` and tags only when the user says "release"**: `git merge --no-ff
-  dev/<upstream>` into `fork/<upstream>`, then the tag. Never commit directly on `dev/*` or
-  `fork/*`, never rebase/force-push them once pushed, never move release tags.
+  dev/<upstream>` into `fork/<upstream>`, then the tag, then merge `fork/<upstream>` back into
+  `dev/<upstream>` (`--no-ff`). Never commit directly on `dev/*` or `fork/*`, never
+  rebase/force-push them once pushed, never move release tags.
 - `SLIC3R_VERSION` stays the upstream version; our version lives only in the tag.
 - No pushes from the sandbox: prepare locally, give the user the exact push commands.
 - Setup per clone: `scripts/fork-setup.sh` (session hook, `--no-ff` default, `CLAUDE.local.md`).

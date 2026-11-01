@@ -21,6 +21,7 @@
 #include "TriangleMeshSlicer.hpp"
 #include "TriangleSelector.hpp"
 #include "MultipleBeds.hpp"
+#include "Support/SmartSupportStates.hpp"
 
 #include <float.h>
 
@@ -1595,6 +1596,110 @@ bool FacetsAnnotation::has_facets(const ModelVolume &mv, TriangleStateType type)
     return TriangleSelector::has_facets(m_data, type);
 }
 
+indexed_triangle_set FacetsAnnotation::get_facets_strict(const ModelVolume &mv, const std::vector<TriangleStateType> &states) const {
+    TriangleSelector selector(mv.mesh());
+    // Reset of TriangleSelector is done inside TriangleSelector's constructor, so we don't need it to perform it again in deserialize().
+    selector.deserialize(m_data, false);
+    return selector.get_facets_strict(states);
+}
+
+// Is there a leaf of any of the states marked in state_mask? One pass over the bitstream without deserialization: each
+// painted triangle's tree is walked from its bitstream_start_idx to the end of the tree with a depth counter, exactly as
+// TriangleSelector::has_facets(data, state) and deserialize() do, so data after the end of a tree (hand-made files) is
+// ignored the same way (review A M2). Leaf codes as TriangleSelector's decode_leaf_state(): states 0-2 in the first
+// nibble, 3-16 in a second one, 17-255 in two more.
+static bool has_facets_of_states(const TriangleSelector::TriangleSplittingData &data, const std::array<bool, TRIANGLE_STATE_TYPE_COUNT> &state_mask)
+{
+    const std::vector<bool> &bits = data.bitstream;
+    std::vector<int>         parents_children;
+    parents_children.reserve(64);
+    for (const TriangleSelector::TriangleBitStreamMapping &tri : data.triangles_to_split) {
+        size_t ibit = size_t(std::max(0, tri.bitstream_start_idx));
+        bool   ok   = true;
+        auto next_nibble = [&bits, &ibit, &ok]() {
+            if (ibit + 4 > bits.size()) {
+                ok = false;
+                return 0;
+            }
+            int n = 0;
+            for (int i = 0; i < 4; ++ i)
+                n |= int(bits[ibit ++]) << i;
+            return n;
+        };
+        // < 0: minus the number of children; >= 0: the leaf state.
+        auto num_children_or_state = [&next_nibble]() -> int {
+            const int code = next_nibble();
+            if (const int split_sides = code & 0b11; split_sides != 0)
+                return - split_sides - 1;
+            int state = code >> 2;
+            if (state == 0b11) {
+                if (const int second = next_nibble(); second != 0b1110)
+                    state = second + 3;
+                else {
+                    const int lo = next_nibble();
+                    const int hi = next_nibble();
+                    state = (lo | (hi << 4)) + 17;
+                }
+            }
+            return state;
+        };
+        auto hit = [&state_mask](int state) { return state < int(TRIANGLE_STATE_TYPE_COUNT) && state_mask[size_t(state)]; };
+        const int root = num_children_or_state();
+        if (! ok)
+            continue;
+        if (root >= 0) {
+            if (hit(root))
+                return true;
+            continue;
+        }
+        parents_children.clear();
+        parents_children.emplace_back(- root);
+        do {
+            if (-- parents_children.back() >= 0) {
+                const int state = num_children_or_state();
+                if (! ok)
+                    break;
+                if (state < 0)
+                    parents_children.emplace_back(- state);
+                else if (hit(state))
+                    return true;
+            } else
+                parents_children.pop_back();
+        } while (! parents_children.empty());
+    }
+    return false;
+}
+
+bool FacetsAnnotation::has_enforcer_like_facets() const {
+    if (m_data.triangles_to_split.empty())
+        return false;
+    std::array<bool, TRIANGLE_STATE_TYPE_COUNT> state_mask{};
+    for (const TriangleStateType state : SmartSupports::enforcer_like_states())
+        state_mask[size_t(state)] = true;
+    return has_facets_of_states(m_data, state_mask);
+}
+
+bool FacetsAnnotation::has_auto_states() const {
+    if (m_data.triangles_to_split.empty())
+        return false;
+    std::array<bool, TRIANGLE_STATE_TYPE_COUNT> state_mask{};
+    for (uint8_t mask = 1; mask <= SmartSupports::cbAll; ++ mask)
+        state_mask[size_t(SmartSupports::auto_state(mask))] = true;
+    return has_facets_of_states(m_data, state_mask);
+}
+
+TriangleSelector::TriangleSplittingData FacetsAnnotation::get_data_auto_baked(const ModelVolume &mv) const {
+    TriangleSelector selector(mv.mesh());
+    // Reset of TriangleSelector is done inside TriangleSelector's constructor, so we don't need it to perform it again in deserialize().
+    selector.deserialize(m_data, false);
+    selector.remap_states(SmartSupports::bake_map());
+    return selector.serialize();
+}
+
+bool FacetsAnnotation::same_paint(const TriangleSelector::TriangleSplittingData &a, const TriangleSelector::TriangleSplittingData &b) {
+    return a.triangles_to_split == b.triangles_to_split && a.bitstream == b.bitstream;
+}
+
 bool FacetsAnnotation::set(const TriangleSelector &selector) {
     TriangleSelector::TriangleSplittingData sel_map = selector.serialize();
     if (sel_map != m_data) {
@@ -1618,24 +1723,32 @@ void FacetsAnnotation::reset()
 // changing it may break backwards compatibility !!!!!
 std::string FacetsAnnotation::get_triangle_as_string(int triangle_idx) const
 {
+    return triangle_as_string(m_data, triangle_idx);
+}
+
+std::string FacetsAnnotation::triangle_as_string(const TriangleSelector::TriangleSplittingData &data, int triangle_idx)
+{
     std::string out;
 
-    auto triangle_it = std::lower_bound(m_data.triangles_to_split.begin(), m_data.triangles_to_split.end(), triangle_idx, [](const TriangleSelector::TriangleBitStreamMapping &l, const int r) { return l.triangle_idx < r; });
-    if (triangle_it != m_data.triangles_to_split.end() && triangle_it->triangle_idx == triangle_idx) {
+    auto triangle_it = std::lower_bound(data.triangles_to_split.begin(), data.triangles_to_split.end(), triangle_idx, [](const TriangleSelector::TriangleBitStreamMapping &l, const int r) { return l.triangle_idx < r; });
+    if (triangle_it != data.triangles_to_split.end() && triangle_it->triangle_idx == triangle_idx) {
         int offset = triangle_it->bitstream_start_idx;
-        int end    = ++ triangle_it == m_data.triangles_to_split.end() ? int(m_data.bitstream.size()) : triangle_it->bitstream_start_idx;
+        int end    = ++ triangle_it == data.triangles_to_split.end() ? int(data.bitstream.size()) : triangle_it->bitstream_start_idx;
+        out.reserve(size_t(std::max(0, end - offset) / 4));
         while (offset < end) {
             int next_code = 0;
             for (int i=3; i>=0; --i) {
                 next_code = next_code << 1;
-                next_code |= int(m_data.bitstream[offset + i]);
+                next_code |= int(data.bitstream[offset + i]);
             }
             offset += 4;
 
             assert(next_code >=0 && next_code <= 15);
             char digit = next_code < 10 ? next_code + '0' : (next_code-10)+'A';
-            out.insert(out.begin(), digit);
+            out.push_back(digit);
         }
+        // The first code is the last digit of the string.
+        std::reverse(out.begin(), out.end());
     }
     return out;
 }

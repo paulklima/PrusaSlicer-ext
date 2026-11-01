@@ -25,7 +25,8 @@ case "$cur" in
     pr/*)       kind="upstream-PR head - code only, never merge into dev/fork" ;;
     *)          kind="UNMANAGED - not part of the fork workflow" ;;
 esac
-say "Branch: ${cur:-(detached)} [$kind] base: $(base_of HEAD)"
+rel_of() { g describe --tags --abbrev=0 --match 'v*+*-v*' --exclude '*-rc.*' "$1"; }
+say "Branch: ${cur:-(detached)} [$kind] base: $(base_of HEAD)$(r=$(rel_of HEAD) && echo " / release $r")"
 [ -n "$(g status --porcelain --untracked-files=no | head -1)" ] && say "Working tree has uncommitted changes."
 
 devs=$(g for-each-ref --sort=-version:refname --format='%(refname:short)' refs/heads/dev/)
@@ -42,15 +43,20 @@ if [ "$(g rev-parse --is-shallow-repository)" = "true" ]; then
     say "Shallow clone: merge checks skipped."
 else
     if has "fork/$ver"; then
-        n=$(g rev-list --count --merges --first-parent "fork/$ver..$dev")
+        n=$(g rev-list --count --merges --first-parent --invert-grep --grep='^Merge fork/' "fork/$ver..$dev")
         [ "${n:-0}" -gt 0 ] && say "Not released yet: $n merge(s) on $dev that are not in fork/$ver (release only on the user's decision)."
+        if ! g merge-base --is-ancestor "fork/$ver" "$dev"; then
+            t=$(g describe --tags --exact-match --match 'v*+*-v*' "fork/$ver")
+            say "Last release not merged back: git switch $dev && git merge --no-ff -m \"Merge fork/$ver @$(g rev-parse --short=10 "fork/$ver") (release ${t:-<tag>})\" fork/$ver"
+        fi
     fi
     unmerged=(); nodocs=(); otherbase=()
     for ref in $(g for-each-ref --format='%(refname)' refs/heads/feature refs/heads/fix); do
         b=${ref#refs/heads/}; id=${b#*/}
         base=$(base_of "$ref")
         [ "${base#version_}" = "$ver" ] || { otherbase+=("$b(${base:-no base})"); continue; }
-        [ "$(g rev-list --count "$base..$ref")" = 0 ] && continue   # new, still empty branch
+        own=$(g describe --tags --abbrev=0 --match "v$ver+*-v*" "$ref") || own=$base   # release-based branch
+        [ "$(g rev-list --count "$own..$ref")" = 0 ] && continue   # new, still empty branch
         if g merge-base --is-ancestor "$ref" "$dev"; then
             g cat-file -e "$dev:doc/fork/features/$id/README.md" ||
                 g grep -q -F "\`$b\`" "$dev" -- doc/fork/features || nodocs+=("$b")
@@ -77,5 +83,5 @@ done
 
 say "AGENT: work only on feature/<id> or fix/<id> (ask the user which, and the <id>, before creating one)."
 say "  Merge into dev/* with --no-ff for testing; a change request from the user = test failed, keep fixing."
-say "  Merge dev/* into fork/* and tag ONLY when the user says 'release'. Never push (the user pushes)."
+say "  Merge dev/* into fork/*, tag, merge fork/* back into dev/* ONLY when the user says 'release'. Never push (the user pushes)."
 exit 0
