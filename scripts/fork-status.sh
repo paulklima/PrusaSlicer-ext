@@ -25,7 +25,8 @@ case "$cur" in
     pr/*)       kind="upstream-PR head - code only, never merge into dev/fork" ;;
     *)          kind="UNMANAGED - not part of the fork workflow" ;;
 esac
-say "Branch: ${cur:-(detached)} [$kind] base: $(base_of HEAD)"
+rel_of() { g describe --tags --abbrev=0 --match 'v*+*-v*' --exclude '*-rc.*' "$1"; }
+say "Branch: ${cur:-(detached)} [$kind] base: $(base_of HEAD)$(r=$(rel_of HEAD) && echo " / release $r")"
 [ -n "$(g status --porcelain --untracked-files=no | head -1)" ] && say "Working tree has uncommitted changes."
 
 devs=$(g for-each-ref --sort=-version:refname --format='%(refname:short)' refs/heads/dev/)
@@ -54,7 +55,8 @@ else
         b=${ref#refs/heads/}; id=${b#*/}
         base=$(base_of "$ref")
         [ "${base#version_}" = "$ver" ] || { otherbase+=("$b(${base:-no base})"); continue; }
-        [ "$(g rev-list --count "$base..$ref")" = 0 ] && continue   # new, still empty branch
+        own=$(g describe --tags --abbrev=0 --match "v$ver+*-v*" "$ref") || own=$base   # release-based branch
+        [ "$(g rev-list --count "$own..$ref")" = 0 ] && continue   # new, still empty branch
         if g merge-base --is-ancestor "$ref" "$dev"; then
             g cat-file -e "$dev:doc/fork/features/$id/README.md" ||
                 g grep -q -F "\`$b\`" "$dev" -- doc/fork/features || nodocs+=("$b")
