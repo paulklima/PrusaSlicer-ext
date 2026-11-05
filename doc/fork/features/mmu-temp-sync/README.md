@@ -40,6 +40,7 @@ the wipe-tower temperature handling (`WipeTower::toolchange_*`).
 | Upstream base | Decision | Reason |
 |---|---|---|
 | version_2.9.5 – 2.9.6 | keep | upstream still emits a single non-waiting M104 |
+| version_2.9.7 | keep | `WipeTower.cpp` unchanged in 2.9.7 |
 
 ## Notes
 
