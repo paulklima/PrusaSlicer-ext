@@ -107,11 +107,10 @@ int start_gui_with_params(GUI::GUI_InitParams& params)
 #if !defined(_WIN32) && !defined(__APPLE__)
     // likely some linux / unix system
     const char* display = boost::nowide::getenv("DISPLAY");
-    // const char *wayland_display = boost::nowide::getenv("WAYLAND_DISPLAY");
-    //if (! ((display && *display) || (wayland_display && *wayland_display))) {
-    if (!(display && *display)) {
-        // DISPLAY not set.
-        boost::nowide::cerr << "DISPLAY not set, GUI mode not available." << std::endl << std::endl;
+    const char* wayland_display = boost::nowide::getenv("WAYLAND_DISPLAY");
+    if (!((display && *display) || (wayland_display && *wayland_display))) {
+        // Neither DISPLAY nor WAYLAND_DISPLAY set.
+        boost::nowide::cerr << "Neither DISPLAY nor WAYLAND_DISPLAY set, GUI mode not available." << std::endl << std::endl;
         print_help(false);
         // Indicate an error.
         return 1;
