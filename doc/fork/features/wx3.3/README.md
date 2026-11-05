@@ -47,6 +47,7 @@ whether this branch is still ahead. Upstream-PR candidate for the API-compat par
 | Upstream base | Decision | Reason |
 |---|---|---|
 | version_2.9.6 | keep | upstream 2.9.6 still on Prusa wx 3.2.6 fork |
+| version_2.9.7 | keep | upstream 2.9.7 still pins Prusa's wx fork (`5462e7d7cf`) |
 
 ## Notes
 
