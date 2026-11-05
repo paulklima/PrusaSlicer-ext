@@ -48,6 +48,7 @@ towards GTK3; re-check at every bump.
 | Upstream base | Decision | Reason |
 |---|---|---|
 | version_2.9.4 – 2.9.6 | keep | upstream still GTK2/X11-only on Linux |
+| version_2.9.7 | keep | upstream 2.9.7 still forces `GDK_BACKEND=x11` (`src/CLI/Setup.cpp`) |
 
 ## Notes
 
