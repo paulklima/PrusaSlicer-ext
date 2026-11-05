@@ -1524,7 +1524,8 @@ void DiffPresetDialog::create_presets_sizer()
         PresetComboBox* presets_right;
         ScalableButton* equal_bmp = new ScalableButton(this, wxID_ANY, "equal");
 
-        auto add_preset_combobox = [collection, sizer, new_type, this](PresetComboBox** cb_, PresetBundle* preset_bundle) {
+        auto add_preset_combobox = [collection_app = collection, sizer, new_type, this](PresetComboBox** cb_, PresetBundle* preset_bundle) {
+            const PresetCollection* collection = m_external_bundles ? get_preset_collection(new_type, preset_bundle) : collection_app;
             *cb_ = new PresetComboBox(this, new_type, wxSize(em_unit() * 35, -1), preset_bundle);
             PresetComboBox*cb = (*cb_);
             cb->SetFont(this->GetFont());
@@ -1595,8 +1596,8 @@ void DiffPresetDialog::create_tree()
     m_tree->SetFont(this->GetFont());
     m_tree->AppendToggleColumn_(L"\u2714", DiffModel::colToggle, wxLinux ? 9 : 6);
     m_tree->AppendBmpTextColumn("",                      DiffModel::colIconText, 35);
-    m_tree->AppendBmpTextColumn(_L("Left Preset Value"), DiffModel::colOldValue, 15);
-    m_tree->AppendBmpTextColumn(_L("Right Preset Value"),DiffModel::colModValue, 15);
+    m_tree->AppendBmpTextColumn(m_left_label.IsEmpty()  ? _L("Left Preset Value")  : m_left_label,  DiffModel::colOldValue, 15);
+    m_tree->AppendBmpTextColumn(m_right_label.IsEmpty() ? _L("Right Preset Value") : m_right_label, DiffModel::colModValue, 15);
     m_tree->Hide();
     m_tree->GetColumn(DiffModel::colToggle)->SetHidden(true);
 }
@@ -1724,6 +1725,36 @@ DiffPresetDialog::DiffPresetDialog(MainFrame* mainframe)
     m_preset_bundle_left  = *wxGetApp().preset_bundle;
     m_preset_bundle_right = *wxGetApp().preset_bundle;
 
+    create_ui();
+}
+
+DiffPresetDialog::DiffPresetDialog(wxWindow* parent, PresetBundle&& left, PresetBundle&& right,
+                                   const wxString& title, const wxString& left_label, const wxString& right_label)
+    : DPIDialog(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER, "diff_backup_presets_dialog", wxGetApp().normal_font().GetPointSize()),
+    m_pr_technology(left.printers.get_edited_preset().printer_technology()),
+    m_preset_bundle_left(std::move(left)),
+    m_preset_bundle_right(std::move(right)),
+    m_external_bundles(true),
+    m_title(title),
+    m_left_label(left_label),
+    m_right_label(right_label)
+{
+    create_ui();
+}
+
+int DiffPresetDialog::show_modal()
+{
+    this->SetTitle(m_title);
+    m_view_type = Preset::TYPE_INVALID;
+    update_bundles_from_app();
+    update_controls_visibility(m_view_type);
+    Fit();
+    update_tree();
+    return ShowModal();
+}
+
+void DiffPresetDialog::create_ui()
+{
     // Create UI items
 
     create_info_lines();
@@ -1769,8 +1800,10 @@ void DiffPresetDialog::update_controls_visibility(Preset::Type type /* = Preset:
 
 void DiffPresetDialog::update_bundles_from_app()
 {
-    m_preset_bundle_left  = *wxGetApp().preset_bundle;
-    m_preset_bundle_right = *wxGetApp().preset_bundle;
+    if (! m_external_bundles) {
+        m_preset_bundle_left  = *wxGetApp().preset_bundle;
+        m_preset_bundle_right = *wxGetApp().preset_bundle;
+    }
 
     m_pr_technology = m_preset_bundle_left.printers.get_edited_preset().printer_technology();
 
@@ -1855,13 +1888,16 @@ void DiffPresetDialog::update_tree()
         Preset::Type type = preset_combos.presets_left->get_type();
 
         const PresetCollection* presets = get_preset_collection(type);
+        // Fork (config-backup): external bundles are looked up on their own side.
+        const PresetCollection* presets_left  = m_external_bundles ? get_preset_collection(type, &m_preset_bundle_left)  : presets;
+        const PresetCollection* presets_right = m_external_bundles ? get_preset_collection(type, &m_preset_bundle_right) : presets;
 
         std::string preset_name_full = get_selection(preset_combos.presets_left);
         std::string preset_name = Preset::remove_suffix_modified(preset_name_full);
-        const Preset* left_preset  = presets->find_preset(preset_name, false, preset_name_full.length() != preset_name.length());
+        const Preset* left_preset  = presets_left->find_preset(preset_name, false, preset_name_full.length() != preset_name.length());
         preset_name_full = get_selection(preset_combos.presets_right);
         preset_name = Preset::remove_suffix_modified(preset_name_full);
-        const Preset* right_preset = presets->find_preset(preset_name, false, preset_name_full.length() != preset_name.length());
+        const Preset* right_preset = presets_right->find_preset(preset_name, false, preset_name_full.length() != preset_name.length());
 
         if (!left_preset || !right_preset) {
             bottom_info = _L("One of the presets doesn't found");
@@ -1938,7 +1974,7 @@ void DiffPresetDialog::update_tree()
     m_tree->Show(show_tree);
 
     bool can_transfer_options = m_view_type == Preset::TYPE_INVALID || get_left_preset_name(m_view_type) != get_right_preset_name(m_view_type);
-    m_edit_sizer->Show(show_tree && can_transfer_options);
+    m_edit_sizer->Show(show_tree && can_transfer_options && ! m_external_bundles);
     m_buttons->Show(m_edit_sizer->IsShown(size_t(0)) && m_use_for_transfer->GetValue());
    
     update_bottom_info(bottom_info);

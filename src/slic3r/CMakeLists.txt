@@ -46,6 +46,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BitmapCache.hpp
     GUI/ConfigSnapshotDialog.cpp
     GUI/ConfigSnapshotDialog.hpp
+    GUI/ConfigBackupDialog.cpp
+    GUI/ConfigBackupDialog.hpp
     GUI/3DScene.cpp
     GUI/3DScene.hpp
     GUI/format.hpp
@@ -81,6 +83,11 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmoSlaSupports.hpp
     GUI/Gizmos/GLGizmoFdmSupports.cpp
     GUI/Gizmos/GLGizmoFdmSupports.hpp
+    GUI/Gizmos/SmartSupportsPanel.cpp
+    GUI/Gizmos/SmartSupportsPanel.hpp
+    GUI/Gizmos/SmartSupportsWait.hpp
+    GUI/Gizmos/TriangleSelectorFdmGui.cpp
+    GUI/Gizmos/TriangleSelectorFdmGui.hpp
     GUI/Gizmos/GLGizmoFuzzySkin.cpp
     GUI/Gizmos/GLGizmoFuzzySkin.hpp
     GUI/Gizmos/GLGizmoFlatten.cpp
@@ -223,6 +230,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/ImGuiPureWrap.cpp
     Config/Snapshot.cpp
     Config/Snapshot.hpp
+    Config/ConfigBackup.cpp
+    Config/ConfigBackup.hpp
     Config/Version.cpp
     Config/Version.hpp    
     Utils/ASCIIFolding.cpp

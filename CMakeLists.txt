@@ -12,6 +12,10 @@ cmake_minimum_required(VERSION 3.13)
 project(PrusaSlicer)
 
 include("version.inc")
+include("version_fork.inc") # fork identity, see doc/fork/features/fork-tooling
+message(STATUS "SLIC3R_BUILD_ID: ${SLIC3R_BUILD_ID}")
+message(STATUS "SLIC3R_FORK_ID: ${SLIC3R_FORK_ID}")
+
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
@@ -520,7 +524,6 @@ foreach(po_file ${L10N_PO_FILES})
             COMMAND msgmerge -N -o ${po_file} ${po_file} "${L10N_DIR}/PrusaSlicer.pot"
             # delete obsolete lines from resulting PO to avoid conflicts after a merging of it with wxWidgets.po
             COMMAND msgattrib --no-obsolete -o ${po_file} ${po_file}
-            DEPENDS ${po_file}
         )
     endif()
 endforeach()
@@ -540,7 +543,6 @@ foreach(po_file ${L10N_PO_FILES})
         COMMAND msgcat --use-first -o ${po_file} ${po_file} ${wx_po_file}
         # delete obsolete lines from resulting PO
         COMMAND msgattrib --no-obsolete -o ${po_file} ${po_file}
-        DEPENDS ${po_file}
     )
 endforeach()
 
@@ -556,7 +558,6 @@ foreach(po_file ${L10N_PO_FILES})
         TARGET gettext_po_to_mo PRE_BUILD
         COMMAND msgfmt ARGS --check-format -o ${mo_file} ${po_file}
         #COMMAND msgfmt ARGS --check-compatibility -o ${mo_file} ${po_file}
-        DEPENDS ${po_file}
     )
 endforeach()
 

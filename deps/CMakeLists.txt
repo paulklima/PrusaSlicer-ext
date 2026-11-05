@@ -123,6 +123,12 @@ if (APPLE)
     )
 endif ()
 
+# CMake 4.0 (Ubuntu 26.04) removed compatibility with policy versions < 3.5, which
+# the vendored dependencies (Blosc, Boost, OCCT, ...) still request. Appended AFTER
+# both the non-APPLE and APPLE DEP_CMAKE_OPTS blocks so it survives on every platform;
+# AddCMakeProject forwards ${DEP_CMAKE_OPTS} to each ExternalProject child configure.
+list(APPEND DEP_CMAKE_OPTS "-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+
 list_projects(FOUND_PACKAGES ${CMAKE_CURRENT_LIST_DIR})
 
 dep_message(STATUS "Found external package definitions: ${FOUND_PACKAGES}")

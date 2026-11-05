@@ -763,7 +763,7 @@ wxCoord    OG_CustomCtrl::CtrlLine::draw_text(wxDC& dc, wxPoint pos, const wxStr
     }
 
     if (!text.IsEmpty()) {
-        const wxString& out_text = multiline_text.IsEmpty() ? text : multiline_text;
+        const wxString out_text = multiline_text.IsEmpty() ? text : multiline_text;
         wxCoord text_width, text_height;
         dc.GetMultiLineTextExtent(out_text, &text_width, &text_height);
 

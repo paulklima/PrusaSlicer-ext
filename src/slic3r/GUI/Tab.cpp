@@ -3238,7 +3238,7 @@ void TabPrinter::build_extruder_pages(size_t n_before_extruders)
 {
     for (auto extruder_idx = m_extruders_count_old; extruder_idx < m_extruders_count; ++extruder_idx) {
         //# build page
-        const wxString&page_name = wxString::Format("Extruder %d", int(extruder_idx + 1));
+        const wxString page_name = wxString::Format("Extruder %d", int(extruder_idx + 1));
         auto           page      = add_options_page(page_name, "funnel", true);
         m_pages.insert(m_pages.begin() + n_before_extruders + extruder_idx, page);
 
@@ -4503,6 +4503,7 @@ void Tab::rename_preset()
         // rename file with renamed preset configuration
 
         filesystem::rename(old_file_name, selected_preset.file);
+        notify_preset_files_changed(); // fork: config-backup
 
         // rename selected preset in printers, if it's needed
 

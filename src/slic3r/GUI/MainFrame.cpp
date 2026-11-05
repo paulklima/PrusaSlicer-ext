@@ -36,6 +36,7 @@
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/ForkInfo.hpp"
 
 #include "Tab.hpp"
 #include "3DScene.hpp"
@@ -576,23 +577,12 @@ void MainFrame::update_title()
         }
     }
 
-    std::string build_id = SLIC3R_BUILD_ID;
+    // Fork: show the fork release tag / development describe from the build-time ForkInfo
+    // (never stale, see doc/fork/features/fork-tooling) instead of parsing SLIC3R_BUILD_ID,
+    // whose '+' release-label parsing would cut off the "+ext-v<version>" part.
+    std::string build_id = std::string(SLIC3R_APP_NAME) + "-" + fork_info().id;
     if (! wxGetApp().is_editor())
         boost::replace_first(build_id, SLIC3R_APP_NAME, GCODEVIEWER_APP_NAME);
-    size_t 		idx_plus = build_id.find('+');
-    if (idx_plus != build_id.npos) {
-    	// Parse what is behind the '+'. If there is a number, then it is a build number after the label, and full build ID is shown.
-    	int commit_after_label;
-    	if (! boost::starts_with(build_id.data() + idx_plus + 1, "UNKNOWN") && 
-            (build_id.at(idx_plus + 1) == '-' || sscanf(build_id.data() + idx_plus + 1, "%d-", &commit_after_label) == 0)) {
-    		// It is a release build.
-    		build_id.erase(build_id.begin() + idx_plus, build_id.end());    		
-#if defined(_WIN32) && ! defined(_WIN64)
-    		// People are using 32bit slicer on a 64bit machine by mistake. Make it explicit.
-            build_id += " 32 bit";
-#endif
-    	}
-    }
 
     title += wxString(build_id);
     if (wxGetApp().is_editor())

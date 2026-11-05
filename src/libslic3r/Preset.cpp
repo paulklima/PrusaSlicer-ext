@@ -353,9 +353,23 @@ std::string Preset::remove_invalid_keys(DynamicPrintConfig &config, const Dynami
     return incorrect_keys;
 }
 
+static std::function<void()> s_preset_files_changed_callback;
+
+void set_preset_files_changed_callback(std::function<void()> callback)
+{
+    s_preset_files_changed_callback = std::move(callback);
+}
+
+void notify_preset_files_changed()
+{
+    if (s_preset_files_changed_callback)
+        s_preset_files_changed_callback();
+}
+
 void Preset::save()
 {
     this->config.save(this->file);
+    notify_preset_files_changed();
 }
 
 // Return a label of this preset, consisting of a name and a "(modified)" suffix, if this preset is dirty.
@@ -1166,6 +1180,7 @@ bool PresetCollection::delete_current_preset()
     if (! selected.is_external && ! selected.is_system) {
         // Erase the preset file.
         boost::nowide::remove(selected.file.c_str());
+        notify_preset_files_changed();
     }
     // Remove the preset from the list.
     m_presets.erase(m_presets.begin() + m_idx_selected);
@@ -1194,6 +1209,7 @@ bool PresetCollection::delete_preset(const std::string& name)
     if (!preset.is_external && !preset.is_system) {
         // Erase the preset file.
         boost::nowide::remove(preset.file.c_str());
+        notify_preset_files_changed();
     }
     m_presets.erase(it);
 
@@ -1847,6 +1863,7 @@ void PhysicalPrinter::save(const std::string& file_name_from, const std::string&
     this->file = file_name_to;
     // save configuration
     this->config.save(this->file);
+    notify_preset_files_changed();
 }
 
 void PhysicalPrinter::update_from_preset(const Preset& preset)
@@ -2198,6 +2215,7 @@ bool PhysicalPrinterCollection::delete_printer(const std::string& name)
     const PhysicalPrinter& printer = *it;
     // Erase the preset file.
     boost::nowide::remove(printer.file.c_str());
+    notify_preset_files_changed();
     m_printers.erase(it);
     return true;
 }
@@ -2210,6 +2228,7 @@ bool PhysicalPrinterCollection::delete_selected_printer()
 
     // Erase the preset file.
     boost::nowide::remove(printer.file.c_str());
+    notify_preset_files_changed();
     // Remove the preset from the list.
     m_printers.erase(m_printers.begin() + m_idx_selected);
     // unselect all printers

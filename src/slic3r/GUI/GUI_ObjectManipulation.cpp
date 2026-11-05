@@ -286,7 +286,7 @@ ObjectManipulation::ObjectManipulation(wxWindow* parent) :
         sizer->Add(axis_name, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, border);
 
         // We will add a button to toggle mirroring to each axis:
-        auto btn = new ScalableButton(parent, wxID_ANY, "mirroring_off", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER | wxTRANSPARENT_WINDOW);
+        auto btn = new ScalableButton(parent, wxID_ANY, "mirroring_off", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER);
         btn->SetToolTip(format_wxstr(_L("Mirror along %1% axis"), label));
         m_mirror_buttons[axis_idx] = btn;
 
@@ -1174,7 +1174,7 @@ void ObjectManipulation::msw_rescale()
     msw_rescale_word_local_combo(m_word_local_combo);
     m_word_local_combo_sizer->SetMinSize(wxSize(-1, m_word_local_combo->GetBestHeight(-1)));
 
-    const wxString& tooltip = m_fix_by_winsdk_bitmap->GetToolTipText();
+    const wxString tooltip = m_fix_by_winsdk_bitmap->GetToolTipText();
     m_fix_by_winsdk_bitmap->SetBitmap(tooltip.IsEmpty() ? wxNullBitmap : m_manifold_warning_bmp.bmp());
     m_fix_by_winsdk_bitmap->SetMinSize(tooltip.IsEmpty() ? wxSize(0, 0) : m_manifold_warning_bmp.GetSize());
 

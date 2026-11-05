@@ -215,7 +215,9 @@ static bool setup_common()
     // On Linux, wxGTK has no support for Wayland, and the app crashes on
     // startup if gtk3 is used. This env var has to be set explicitly to
     // instruct the window manager to fall back to X server mode.
-    ::setenv("GDK_BACKEND", "x11", /* replace */ true);
+    // Force X11 only as a fallback. If the user explicitly sets GDK_BACKEND
+    // (for example to wayland), keep that choice for troubleshooting.
+    // ::setenv("GDK_BACKEND", "x11", /* replace */ false);
 
     // https://github.com/prusa3d/PrusaSlicer/issues/12969
     ::setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", /* replace */ false);
