@@ -22,6 +22,7 @@
 #include "wxExtensions.hpp"
 #include "libslic3r/BlacklistedLibraryCheck.hpp"
 #include "libslic3r/Color.hpp"
+#include "libslic3r/ForkInfo.hpp"
 #include "format.hpp"
 
 #ifdef _WIN32
@@ -37,6 +38,14 @@
 namespace Slic3r { 
 namespace GUI {
 
+// Fork: the main info grew (fork provenance + feature list) and its window has no scrollbar,
+// so size it to its content instead of clipping the last lines (again after DPI changes).
+static void fit_html_to_content(wxHtmlWindow* html, int em)
+{
+    html->GetInternalRepresentation()->Layout(60 * em);
+    html->SetMinSize(wxSize(60 * em, html->GetInternalRepresentation()->GetHeight() + em));
+}
+
 std::string get_main_info(bool format_as_html)
 {
     std::stringstream out;
@@ -49,10 +58,36 @@ std::string get_main_info(bool format_as_html)
         out << b_start << (wxGetApp().is_editor() ? SLIC3R_APP_NAME : GCODEVIEWER_APP_NAME) << b_end << line_end;
     out << b_start << "Version:   "             << b_end << SLIC3R_VERSION << line_end;
     
-    std::string build_id = SLIC3R_BUILD_ID;
+    // Fork: build-time id (never stale), see doc/fork/features/fork-tooling.
+    std::string build_id = std::string(SLIC3R_APP_NAME) + "-" + fork_info().id;
     if (! wxGetApp().is_editor())
         boost::replace_first(build_id, SLIC3R_APP_NAME, GCODEVIEWER_APP_NAME);
     out << b_start << "Build:     " << b_end << build_id << line_end;
+    if (SLIC3R_FORK_ID[0] != '\0') {
+        const ForkInfo& fi = fork_info();
+        out << b_start << "Fork:      " << b_end << SLIC3R_FORK_ID << line_end;
+        out << b_start << "Project:   " << b_end
+            << (format_as_html ? "<a href=\"" SLIC3R_FORK_URL "\">" SLIC3R_FORK_URL "</a>" : SLIC3R_FORK_URL) << line_end;
+        out << b_start << "State:     " << b_end << fi.summary_line() << line_end;
+        out << b_start << "Upstream:  " << b_end << fi.upstream_tag << " (" << fi.upstream_commit << ")" << line_end;
+        out << b_start << "Extended features:" << b_end << line_end;
+        // id | title, as a table so wrapped titles stay aligned; notes only for fixes and real upstream PRs
+        if (format_as_html)
+            out << "<table cellspacing=\"0\" cellpadding=\"1\">";
+        for (const ForkFeature& f : fi.features) {
+            std::string title = f.title;
+            if (f.kind == "fix")
+                title += " (fix)";
+            if (!f.upstream_pr.empty() && f.upstream_pr != "none")
+                title += " - upstream PR: " + f.upstream_pr;
+            if (format_as_html)
+                out << "<tr><td valign=\"top\" nowrap>&nbsp;&nbsp;&nbsp;&nbsp;" << f.id << "&nbsp;&nbsp;</td><td>" << title << "</td></tr>";
+            else
+                out << "  " << f.id << ": " << title << line_end;
+        }
+        if (format_as_html)
+            out << "</table>";
+    }
 
     out << line_end;
     out << b_start << "Operating System:    "   << b_end << wxPlatformInfo::Get().GetOperatingSystemFamilyName() << line_end;
@@ -150,6 +185,8 @@ SysInfoDialog::SysInfoDialog()
             "</html>", bgr_clr_str, text_clr_str, text_clr_str,
             get_main_info(true));
         m_html->SetPage(text);
+        fit_html_to_content(m_html, em_unit());
+        m_html->Bind(wxEVT_HTML_LINK_CLICKED, [](wxHtmlLinkEvent& event) { wxGetApp().open_browser_with_warning_dialog(event.GetLinkInfo().GetHref()); });
         vsizer->Add(m_html, 1, wxEXPAND | wxBOTTOM, wxGetApp().em_unit());
     }
 
@@ -212,6 +249,7 @@ void SysInfoDialog::on_dpi_changed(const wxRect &suggested_rect)
     int font_size[] = { static_cast<int>(fs*1.5), static_cast<int>(fs*1.4), static_cast<int>(fs*1.3), fs, fs, fs, fs };
 
     m_html->SetFonts(font.GetFaceName(), font.GetFaceName(), font_size);
+    fit_html_to_content(m_html, em_unit());
     m_html->Refresh();
 
     const int& em = em_unit();

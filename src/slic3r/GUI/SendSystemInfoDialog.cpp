@@ -169,6 +169,10 @@ static bool check_internet_connection_win()
 // current version is newer. Only major and minor versions are compared.
 static bool should_dialog_be_shown()
 {
+    // Fork: never offer to send system info of a fork build to Prusa Research
+    // (it would skew their statistics; see doc/fork/features/fork-tooling).
+    return false;
+
     std::string last_sent_version = wxGetApp().app_config->get("version_system_info_sent");
     Semver semver_current(SLIC3R_VERSION);
     Semver semver_last_sent;
