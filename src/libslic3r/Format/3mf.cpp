@@ -18,6 +18,7 @@
 
 #include "3mf.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <optional>
@@ -138,6 +139,9 @@ static constexpr const char* TRANSFORM_ATTR = "transform";
 static constexpr const char* PRINTABLE_ATTR = "printable";
 static constexpr const char* INSTANCESCOUNT_ATTR = "instances_count";
 static constexpr const char* CUSTOM_SUPPORTS_ATTR = "slic3rpe:custom_supports";
+// Fork (smart support painting): paint on supports including the smart paint states 3..9, written next to
+// CUSTOM_SUPPORTS_ATTR (where these states are baked to enforcers) only for volumes with smart paint.
+static constexpr const char* EXT_CUSTOM_SUPPORTS_ATTR = "slic3rpe:ext_custom_supports";
 static constexpr const char* CUSTOM_SEAM_ATTR = "slic3rpe:custom_seam";
 static constexpr const char* MM_SEGMENTATION_ATTR = "slic3rpe:mmu_segmentation";
 static constexpr const char* FUZZY_SKIN_ATTR = "slic3rpe:fuzzy_skin";
@@ -380,6 +384,9 @@ namespace Slic3r {
             std::vector<Vec3f> vertices;
             std::vector<Vec3i> triangles;
             std::vector<std::string> custom_supports;
+            // EXT_CUSTOM_SUPPORTS_ATTR: (triangle index, value) of the triangles that have it, ascending. Sparse, so that
+            // files without the fork attribute cost nothing.
+            std::vector<std::pair<size_t, std::string>> custom_supports_ext;
             std::vector<std::string> custom_seam;
             std::vector<std::string> mm_segmentation;
             std::vector<std::string> fuzzy_skin;
@@ -390,6 +397,7 @@ namespace Slic3r {
                 vertices.clear();
                 triangles.clear();
                 custom_supports.clear();
+                custom_supports_ext.clear();
                 custom_seam.clear();
                 mm_segmentation.clear();
                 fuzzy_skin.clear();
@@ -2147,6 +2155,8 @@ namespace Slic3r {
             get_attribute_value_int(attributes, num_attributes, V3_ATTR));
 
         m_curr_object.geometry.custom_supports.push_back(get_attribute_value_string(attributes, num_attributes, CUSTOM_SUPPORTS_ATTR));
+        if (std::string ext = get_attribute_value_string(attributes, num_attributes, EXT_CUSTOM_SUPPORTS_ATTR); ! ext.empty())
+            m_curr_object.geometry.custom_supports_ext.emplace_back(m_curr_object.geometry.custom_supports.size() - 1, std::move(ext));
         m_curr_object.geometry.custom_seam.push_back(get_attribute_value_string(attributes, num_attributes, CUSTOM_SEAM_ATTR));
         m_curr_object.geometry.fuzzy_skin.push_back(get_attribute_value_string(attributes, num_attributes, FUZZY_SKIN_ATTR));
 
@@ -2657,6 +2667,13 @@ namespace Slic3r {
             if (has_transform)
                 volume->source.transform = Slic3r::Geometry::Transformation(volume_matrix_to_object);
 
+            // Fork (smart support painting): the paint on supports of a triangle with smart paint (states 3..9) is
+            // stored twice, with these states baked to enforcers for other slicers and as is in the fork attribute.
+            // Per triangle, the fork attribute wins where present.
+            const auto &ext    = geometry.custom_supports_ext;
+            auto        ext_it = std::lower_bound(ext.begin(), ext.end(), size_t(volume_data.first_triangle_id),
+                                                  [](const std::pair<size_t, std::string> &e, size_t idx) { return e.first < idx; });
+
             // recreate custom supports, seam, mm segmentation and fuzzy skin from previously loaded attribute
             volume->supported_facets.reserve(triangles_count);
             volume->seam_facets.reserve(triangles_count);
@@ -2668,7 +2685,10 @@ namespace Slic3r {
                 assert(index < geometry.custom_seam.size());
                 assert(index < geometry.mm_segmentation.size());
 
-                volume->supported_facets.set_triangle_from_string(i, geometry.custom_supports[index]);
+                const std::string *custom_supports = &geometry.custom_supports[index];
+                if (ext_it != ext.end() && ext_it->first == index)
+                    custom_supports = &(ext_it ++)->second;
+                volume->supported_facets.set_triangle_from_string(i, *custom_supports);
                 volume->seam_facets.set_triangle_from_string(i, geometry.custom_seam[index]);
                 volume->mm_segmentation_facets.set_triangle_from_string(i, geometry.mm_segmentation[index]);
                 volume->fuzzy_skin_facets.set_triangle_from_string(i, geometry.fuzzy_skin[index]);
@@ -3335,6 +3355,14 @@ namespace Slic3r {
             triangles_count += (int)its.indices.size();
             volume_it->second.last_triangle_id = triangles_count - 1;
 
+            // Fork (smart support painting): stock PrusaSlicer knows the paint on supports states NONE, ENFORCER and
+            // BLOCKER only. If the volume has smart paint (states 3..9), these states are baked to enforcers in the
+            // standard attribute and the paint is kept as is in the fork attribute (preferred by the fork's loader).
+            const bool                              smart_supports = volume->supported_facets.has_auto_states();
+            TriangleSelector::TriangleSplittingData supports_baked;
+            if (smart_supports)
+                supports_baked = volume->supported_facets.get_data_auto_baked(*volume);
+
             for (int i = 0; i < int(its.indices.size()); ++ i) {
                 {
                     const Vec3i &idx = its.indices[i];
@@ -3350,13 +3378,26 @@ namespace Slic3r {
                     output_buffer += buf;
                 }
 
-                std::string custom_supports_data_string = volume->supported_facets.get_triangle_as_string(i);
+                std::string custom_supports_data_string = smart_supports ?
+                    FacetsAnnotation::triangle_as_string(supports_baked, i) :
+                    volume->supported_facets.get_triangle_as_string(i);
                 if (! custom_supports_data_string.empty()) {
                     output_buffer += " ";
                     output_buffer += CUSTOM_SUPPORTS_ATTR;
                     output_buffer += "=\"";
                     output_buffer += custom_supports_data_string;
                     output_buffer += "\"";
+                }
+
+                if (smart_supports) {
+                    std::string ext_custom_supports_data_string = volume->supported_facets.get_triangle_as_string(i);
+                    if (! ext_custom_supports_data_string.empty()) {
+                        output_buffer += " ";
+                        output_buffer += EXT_CUSTOM_SUPPORTS_ATTR;
+                        output_buffer += "=\"";
+                        output_buffer += ext_custom_supports_data_string;
+                        output_buffer += "\"";
+                    }
                 }
 
                 std::string custom_seam_data_string = volume->seam_facets.get_triangle_as_string(i);

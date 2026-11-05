@@ -247,6 +247,12 @@ void TriangleSelector::select_patch(int facet_start, std::unique_ptr<Cursor> &&c
     // Save current cursor center, squared radius and camera direction, so we don't
     // have to pass it around.
     m_cursor = std::move(cursor);
+    // Fork (smart support painting): a PredicateCursor holds closures over its caller's locals. Never keep it beyond
+    // this call, also when one of its predicates throws (a cancel). Other cursors are kept as before.
+    struct DropPredicateCursor {
+        std::unique_ptr<Cursor> &cursor;
+        ~DropPredicateCursor() { if (dynamic_cast<const PredicateCursor*>(cursor.get()) != nullptr) cursor.reset(); }
+    } drop_predicate_cursor { m_cursor };
 
     // In case user changed cursor parameters size since last time, update triangle edge limit.
     set_edge_limit(m_cursor->get_edge_limit());
@@ -1080,23 +1086,30 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i &nei
         return false;
 
     if (num_of_inside_vertices == 3) {
-        // dump any subdivision and select whole triangle
-        undivide_triangle(facet_idx);
-        tr->set_state(type);
+        if (m_paint_rule) {
+            // Paint rule: keep the subdivision of the fully covered triangle and apply the rule to each of its
+            // leaves, so that leaves the rule keeps (e.g. manual paint) survive.
+            this->apply_paint_rule_recursive(facet_idx, type);
+        } else {
+            // dump any subdivision and select whole triangle
+            undivide_triangle(facet_idx);
+            tr->set_state(type);
+        }
     } else {
         // the triangle is partially inside, let's recursively divide it
         // (if not already) and try selecting its children.
 
-        if (! tr->is_split() && tr->get_state() == type) {
+        if (! tr->is_split() && tr->get_state() == (m_paint_rule ? m_paint_rule(tr->get_state(), type) : type)) {
             // This is leaf triangle that is already of correct type as a whole.
             // No need to split, all children would end up selected anyway.
+            // With a paint rule: the rule keeps the state of this leaf (protected or already painted), never split it.
             return true;
         }
 
         if (triangle_splitting)
             split_triangle(facet_idx, neighbors);
         else if (!m_triangles[facet_idx].is_split())
-            m_triangles[facet_idx].set_state(type);
+            m_triangles[facet_idx].set_state(m_paint_rule ? m_paint_rule(m_triangles[facet_idx].get_state(), type) : type);
         tr = &m_triangles[facet_idx]; // might have been invalidated by split_triangle().
 
         int num_of_children = tr->number_of_split_sides() + 1;
@@ -1113,6 +1126,20 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i &nei
     }
 
     return true;
+}
+
+// Called by select_triangle_recursive() for a triangle fully inside the cursor while a paint rule is set.
+void TriangleSelector::apply_paint_rule_recursive(int facet_idx, TriangleStateType type)
+{
+    assert(m_paint_rule);
+    assert(facet_idx < int(m_triangles.size()) && m_triangles[facet_idx].valid());
+    // No triangles are allocated below, thus the reference stays valid.
+    Triangle &tr = m_triangles[facet_idx];
+    if (tr.is_split()) {
+        for (int i = 0; i <= tr.number_of_split_sides(); ++ i)
+            this->apply_paint_rule_recursive(tr.children[i], type);
+    } else
+        tr.set_state(m_paint_rule(tr.get_state(), type));
 }
 
 void TriangleSelector::set_facet(int facet_idx, TriangleStateType state) {
@@ -1638,6 +1665,13 @@ typename IndexedTriangleSetType<facet_info>::type TriangleSelector::get_facets_s
 
 indexed_triangle_set TriangleSelector::get_facets_strict(TriangleStateType state) const {
     return this->get_facets_strict([state](const Triangle &tr) { return tr.get_state() == state; });
+}
+
+indexed_triangle_set TriangleSelector::get_facets_strict(const std::vector<TriangleStateType> &states) const {
+    std::array<bool, TRIANGLE_STATE_TYPE_COUNT> state_mask{};
+    for (const TriangleStateType state : states)
+        state_mask[size_t(state)] = true;
+    return this->get_facets_strict([&state_mask](const Triangle &tr) { return state_mask[size_t(tr.get_state())]; });
 }
 
 indexed_triangle_set TriangleSelector::get_all_facets_strict() const {
@@ -2459,6 +2493,30 @@ std::vector<int> TriangleSelector::HeightRange::get_facets_to_select(const int f
     }
 
     return facets_to_check;
+}
+
+TriangleSelector::PredicateCursor::PredicateCursor(Predicates p, float edge_limit_world, const Transform3d &trafo)
+    : Cursor(Vec3f::Zero(), 0.f, trafo, ClippingPlane()), m_pred(std::move(p))
+{
+    // The predicates work in world coordinates.
+    use_world_coordinates = true;
+    trafo_normal          = this->trafo.linear().inverse().transpose();
+    m_edge_limit          = edge_limit_world;
+}
+
+bool TriangleSelector::PredicateCursor::is_mesh_point_inside(const Vec3f &p) const
+{
+    return m_pred.point_inside && m_pred.point_inside(this->trafo * p);
+}
+
+int TriangleSelector::PredicateCursor::vertices_inside(const Triangle &tr, const std::vector<Vertex> &v) const
+{
+    return m_pred.classify ? m_pred.classify(this->transform_triangle(tr, v)) : Cursor::vertices_inside(tr, v);
+}
+
+bool TriangleSelector::PredicateCursor::is_any_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &v) const
+{
+    return m_pred.touches && m_pred.touches(this->transform_triangle(tr, v));
 }
 
 } // namespace Slic3r
