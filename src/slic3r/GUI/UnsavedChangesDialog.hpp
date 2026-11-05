@@ -366,6 +366,14 @@ class DiffPresetDialog : public DPIDialog
     PresetBundle            m_preset_bundle_left;
     PresetBundle            m_preset_bundle_right;
 
+    // Fork (config-backup): read-only comparison of two given bundles (e.g. a backup and the
+    // current configuration) instead of copies of the application bundle.
+    bool                    m_external_bundles  { false };
+    wxString                m_title;
+    wxString                m_left_label;
+    wxString                m_right_label;
+
+    void create_ui();
     void create_buttons();
     void create_edit_sizer();
     void complete_dialog_creation();
@@ -407,6 +415,10 @@ class DiffPresetDialog : public DPIDialog
 public:
     DiffPresetDialog(MainFrame*mainframe);
     ~DiffPresetDialog() override = default;
+    // Fork (config-backup): read-only comparison of the given bundles.
+    DiffPresetDialog(wxWindow* parent, PresetBundle&& left, PresetBundle&& right,
+                     const wxString& title, const wxString& left_label, const wxString& right_label);
+    int  show_modal();
 
     void show(Preset::Type type = Preset::TYPE_INVALID);
     void update_presets(Preset::Type type = Preset::TYPE_INVALID, bool update_preset_bundles_from_app = true);

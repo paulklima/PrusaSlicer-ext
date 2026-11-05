@@ -289,14 +289,15 @@ void PresetBundle::import_newer_configs(const std::string& from)
 }
 
 PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, ForwardCompatibilitySubstitutionRule substitution_rule, 
-                                                      const PresetPreferences& preferred_selection/* = PresetPreferences()*/)
+                                                      const PresetPreferences& preferred_selection/* = PresetPreferences()*/,
+                                                      const std::string& presets_dir/* = std::string()*/)
 {
     // First load the vendor specific system presets.
     PresetsConfigSubstitutions substitutions;
     std::string errors_cummulative;
-    std::tie(substitutions, errors_cummulative) = this->load_system_presets(substitution_rule);
+    std::tie(substitutions, errors_cummulative) = this->load_system_presets(substitution_rule, presets_dir);
 
-    const std::string& dir_user_presets = data_dir()
+    const std::string dir_user_presets = (presets_dir.empty() ? data_dir() : presets_dir)
 #ifdef SLIC3R_PROFILE_USE_PRESETS_SUBDIR
         // Store the print/filament/printer presets into a "presets" directory.
         + "/presets"
@@ -347,7 +348,7 @@ PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, Forward
 
 // Load system presets into this PresetBundle.
 // For each vendor, there will be a single PresetBundle loaded.
-std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_presets(ForwardCompatibilitySubstitutionRule compatibility_rule)
+std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_presets(ForwardCompatibilitySubstitutionRule compatibility_rule, const std::string& presets_dir)
 {
     if (compatibility_rule == ForwardCompatibilitySubstitutionRule::EnableSystemSilent)
         // Loading system presets, don't log substitutions.
@@ -357,7 +358,7 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
         compatibility_rule = ForwardCompatibilitySubstitutionRule::Disable;
 
     // Here the vendor specific read only Config Bundles are stored.
-    boost::filesystem::path     dir = (boost::filesystem::path(data_dir()) / "vendor").make_preferred();
+    boost::filesystem::path     dir = (boost::filesystem::path(presets_dir.empty() ? data_dir() : presets_dir) / "vendor").make_preferred();
     PresetsConfigSubstitutions  substitutions;
     std::string                 errors_cummulative;
     bool                        first = true;

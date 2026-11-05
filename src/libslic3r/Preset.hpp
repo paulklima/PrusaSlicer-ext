@@ -7,6 +7,7 @@
 #define slic3r_Preset_hpp_
 
 #include <deque>
+#include <functional>
 #include <set>
 #include <unordered_map>
 
@@ -94,6 +95,11 @@ public:
 };
 
 class Preset;
+
+// Fork (config-backup): called after user preset / physical printer files were written,
+// renamed or deleted (used to trigger a configuration backup). Main thread only.
+void set_preset_files_changed_callback(std::function<void()> callback);
+void notify_preset_files_changed();
 
 // Helper to hold a profile with its vendor definition, where the vendor definition may have been extracted from a parent system preset.
 // The parent preset is only accessible through PresetCollection, therefore to allow definition of the various is_compatible_with methods
@@ -693,7 +699,7 @@ public:
     bool                has_empty_config() const;
     void                update_preset_names_in_config();
 
-    void                save() { this->config.save(this->file); }
+    void                save() { this->config.save(this->file); notify_preset_files_changed(); }
     void                save(const std::string& file_name_from, const std::string& file_name_to);
 
     void                update_from_preset(const Preset& preset);
