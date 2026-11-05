@@ -37,3 +37,4 @@ is moot; the fix only matters for the 2.9.x line. If a PR is wanted after all: `
 | Upstream base | Decision | Reason |
 |---|---|---|
 | version_2.9.6 | keep | live bug on 2.9.6; drop at the 3.x bump (code gone upstream) |
+| version_2.9.7 | keep | `update_tilts_by_mode` unchanged in 2.9.7 (only `used_filament_compensation` added to `PrintConfig.cpp`) |
