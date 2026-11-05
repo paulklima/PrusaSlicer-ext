@@ -1342,6 +1342,10 @@ bool GUI_App::on_init_inner()
     // Set initialization of image handlers before any UI actions - See GH issue #7469
     wxInitAllImageHandlers();
 
+    // wx 3.3.2: runtime GLX/EGL selection. Use GLX on X11, EGL on Wayland.
+    // Must be called before any wxGLCanvas creation.
+    OpenGLManager::prefer_glx_if_x11();
+
     // Set our own gui log as an active target
     m_log_gui = new LogGui();
     wxLog::SetActiveTarget(m_log_gui);

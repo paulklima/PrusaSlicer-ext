@@ -86,7 +86,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
             }
             else {
                 assert(opt_key == "support");
-                const wxString& selection = boost::any_cast<wxString>(value);
+                const wxString selection = boost::any_cast<wxString>(value);
                 PrinterTechnology printer_technology = wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology();
 
                 auto support_material = selection == _("None") ? false : true;
@@ -134,7 +134,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
     auto empty_widget = [this] (wxWindow* parent) {
         auto sizer = new wxBoxSizer(wxHORIZONTAL);
         auto btn = new ScalableButton(parent, wxID_ANY, "mirroring_transparent", wxEmptyString,
-            wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER | wxTRANSPARENT_WINDOW);
+            wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER);
         sizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, int(0.3 * wxGetApp().em_unit()));
         m_empty_buttons.push_back(btn);
         return sizer;
@@ -197,7 +197,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
         }));
 
         auto btn = new ScalableButton(parent, wxID_ANY, "mirroring_transparent", wxEmptyString,
-                                      wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER | wxTRANSPARENT_WINDOW);
+                                      wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER);
         sizer->Add(btn , 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT,
             int(0.3 * wxGetApp().em_unit()));
         m_empty_buttons.push_back(btn);
@@ -225,7 +225,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
 
         DynamicPrintConfig new_conf = *config_sla;
         if (opt_key == "pad") {
-            const wxString& selection = boost::any_cast<wxString>(value);
+            const wxString selection = boost::any_cast<wxString>(value);
 
             const bool pad_enable = selection == _("None") ? false : true;
             new_conf.set_key_value("pad_enable", new ConfigOptionBool(pad_enable));
@@ -238,7 +238,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
         else
         {
             assert(opt_key == "support");
-            const wxString& selection = boost::any_cast<wxString>(value);
+            const wxString selection = boost::any_cast<wxString>(value);
 
             const bool supports_enable = selection == _("None") ? false : true;
             new_conf.set_key_value("supports_enable", new ConfigOptionBool(supports_enable));

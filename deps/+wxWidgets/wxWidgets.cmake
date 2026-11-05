@@ -28,9 +28,9 @@ else ()
 endif ()
 
 add_cmake_project(wxWidgets
-    URL https://github.com/prusa3d/wxWidgets/archive/5462e7d7cfac645926188443e842171e107b312c.zip
-    URL_HASH SHA256=3EBB971DDB45CEEA6D9B965C3D0266F44EDAE71F2A7DAA5D48DB34BD95AA878B
-    PATCH_COMMAND COMMAND ${PATCH_CMD} ${CMAKE_CURRENT_LIST_DIR}/wx-fixes.patch
+    URL https://github.com/wxWidgets/wxWidgets/releases/download/v3.3.3/wxWidgets-3.3.3.tar.bz2
+    URL_HASH SHA256=81b09d6dd9f1ed9301f8c55a968a488d0491f264dc2bab19a7e407ac67009482
+    PATCH_COMMAND COMMAND ${PATCH_CMD} ${CMAKE_CURRENT_LIST_DIR}/wx-wayland-protocol.patch
     CMAKE_ARGS
         "-DCMAKE_DEBUG_POSTFIX:STRING="
         -DwxBUILD_PRECOMP=ON
