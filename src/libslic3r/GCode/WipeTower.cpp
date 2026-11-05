@@ -839,15 +839,24 @@ WipeTower::ToolChangeResult WipeTower::tool_change(size_t tool)
 	if (m_set_extruder_trimpot)
 		writer.set_extruder_trimpot(750);
 
+    // MMU temperature-sync hybrid (see doc/improvements/mmu-01-temperature-wait.md):
+    // capture old/new print temperatures so toolchange_Wipe and the terminal M109
+    // can place commands by transition direction.
+    const int old_print_temp = is_first_layer()
+        ? m_filpar[m_current_tool].first_layer_temperature
+        : m_filpar[m_current_tool].temperature;
+    const int new_print_temp = (tool != (unsigned int)-1)
+        ? (is_first_layer() ? m_filpar[tool].first_layer_temperature : m_filpar[tool].temperature)
+        : 0;
+
     // Ram the hot material out of the melt zone, retract the filament into the cooling tubes and let it cool.
     if (tool != (unsigned int)-1){ 			// This is not the last change.
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material,
-                          (is_first_layer() ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature),
-                          (is_first_layer() ? m_filpar[tool].first_layer_temperature : m_filpar[tool].temperature));
+                          old_print_temp, new_print_temp);
         toolchange_Change(writer, tool, m_filpar[tool].material); // Change the tool, set a speed override for soluble and flex materials.
         toolchange_Load(writer, cleaning_box);
         writer.travel(writer.x(), writer.y()-m_perimeter_width); // cooling and loading were done a bit down the road
-        toolchange_Wipe(writer, cleaning_box, wipe_volume);     // Wipe the newly loaded filament until the end of the assigned wipe area.
+        toolchange_Wipe(writer, cleaning_box, wipe_volume, old_print_temp, new_print_temp);     // Wipe the newly loaded filament until the end of the assigned wipe area.
         ++ m_num_tool_changes;
     } else
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material, m_filpar[m_current_tool].temperature, m_filpar[m_current_tool].temperature);
@@ -859,8 +868,14 @@ WipeTower::ToolChangeResult WipeTower::tool_change(size_t tool)
 	writer.speed_override_restore();
     writer.feedrate(m_travel_speed * 60.f)
           .flush_planner_queue()
-          .reset_extruder()
-          .append("; CP TOOLCHANGE END\n"
+          .reset_extruder();
+
+    // Terminal M109 safety net: guarantees the new filament is at target before
+    // the model resumes. No-op when temperature is already reached.
+    if (m_semm && tool != (unsigned int)-1 && new_print_temp != 0)
+        writer.set_extruder_temp(new_print_temp, true);
+
+    writer.append("; CP TOOLCHANGE END\n"
                   ";------------------\n"
                   "\n\n");
 
@@ -992,10 +1007,20 @@ void WipeTower::toolchange_Unload(
     // Wipe tower should only change temperature with single extruder MM. Otherwise, all temperatures should
     // be already set and there is no need to change anything. Also, the temperature could be changed
     // for wrong extruder.
-    if (m_semm) {
-        if (new_temperature != 0 && (new_temperature != m_old_temperature || is_first_layer() || cold_ramming) ) { 	// Set the extruder temperature, but don't wait.
-            // If the required temperature is the same as last time, don't emit the M104 again (if user adjusted the value, it would be reset)
-            // However, always change temperatures on the first layer (this is to avoid issues with priming lines turned off).
+    if (m_semm && new_temperature != 0) {
+        // Hybrid temp sync (see doc/improvements/mmu-01-temperature-wait.md).
+        // Compare against the function-arg `old_temperature` (the *current* filament's
+        // print temp) rather than `m_old_temperature` (cached "last emitted M104"),
+        // which goes stale once we start skipping emits on hot->cool transitions.
+        //   cool->hot (new > old): emit M104 here for early heat ramp during unload/load.
+        //   same-temp + cold-ramming: emit M104 to recover from the -20C ramming drop
+        //                             (cold_ramming dipped the nozzle at L907; restore it).
+        //   hot->cool: emit nothing here — toolchange_Wipe's start-of-wipe M104 handles
+        //              cooling so it overlaps the purge instead of the load.
+        //   First-layer / drift: covered by the terminal M109 safety net in tool_change().
+        const bool heating_up      = new_temperature > old_temperature;
+        const bool needs_recovery  = cold_ramming && new_temperature == old_temperature;
+        if (heating_up || needs_recovery) {
             if (cold_ramming && cooling_will_happen)
                 change_temp_later = true;
             else
@@ -1144,11 +1169,24 @@ void WipeTower::toolchange_Load(
 void WipeTower::toolchange_Wipe(
 	WipeTowerWriter &writer,
 	const box_coordinates  &cleaning_box,
-	float wipe_volume)
+	float wipe_volume,
+	int old_temperature,
+	int new_temperature)
 {
 	// Increase flow on first layer, slow down print.
     writer.set_extrusion_flow(m_extrusion_flow * (is_first_layer() ? 1.18f : 1.f))
 		  .append("; CP TOOLCHANGE WIPE\n");
+
+    // Hybrid temp sync (see doc/improvements/mmu-01-temperature-wait.md):
+    //   cool -> hot: blocking M109 here so the purge runs at the new (correct) temp.
+    //   hot -> cool: non-blocking M104 here so the nozzle cools during the purge.
+    //   same temp:   no command — the terminal M109 in tool_change() is the safety net.
+    if (m_semm && new_temperature != 0 && old_temperature != 0) {
+        if (new_temperature > old_temperature)
+            writer.set_extruder_temp(new_temperature, true);   // M109
+        else if (new_temperature < old_temperature)
+            writer.set_extruder_temp(new_temperature, false);  // M104
+    }
 	const float& xl = cleaning_box.ld.x();
 	const float& xr = cleaning_box.rd.x();
 
