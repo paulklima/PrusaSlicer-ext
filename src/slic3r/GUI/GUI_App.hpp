@@ -104,6 +104,8 @@ enum ConfigMenuIDs {
     ConfigMenuModeExpert,
     ConfigMenuLanguage,
     ConfigMenuFlashFirmware,
+    ConfigMenuBackupNow,     // fork: config-backup
+    ConfigMenuBackups,       // fork: config-backup
     ConfigMenuCnt,
     ConfigMenuWifiConfigFile
 };
