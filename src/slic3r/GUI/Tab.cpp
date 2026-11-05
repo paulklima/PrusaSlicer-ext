@@ -4503,6 +4503,7 @@ void Tab::rename_preset()
         // rename file with renamed preset configuration
 
         filesystem::rename(old_file_name, selected_preset.file);
+        notify_preset_files_changed(); // fork: config-backup
 
         // rename selected preset in printers, if it's needed
 

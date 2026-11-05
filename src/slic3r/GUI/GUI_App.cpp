@@ -83,6 +83,8 @@
 #include "../Utils/WinRegistry.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "ConfigSnapshotDialog.hpp"
+#include "slic3r/Config/ConfigBackup.hpp"
+#include "ConfigBackupDialog.hpp"
 #include "FirmwareDialog.hpp"
 #include "slic3r/GUI/Preferences.hpp" // IWYU pragma: keep
 #include "Tab.hpp"
@@ -1401,6 +1403,11 @@ bool GUI_App::on_init_inner()
     init_ui_colours();
     init_fonts();
 
+    // Fork (config-backup): back up the configuration of the previous version before anything below
+    // (import of older configs, vendor checks, preset migration) modifies the data directory.
+    if (m_app_conf_exists && is_editor() && ! ConfigBackup::backup_on_version_change(*app_config))
+        return false;
+
     std::string older_data_dir_path;
     if (m_app_conf_exists) {
         if (app_config->orig_version().valid() && app_config->orig_version() < *Semver::parse(SLIC3R_VERSION)) {
@@ -1619,8 +1626,11 @@ bool GUI_App::on_init_inner()
             // ensure the selected technology is ptFFF
             plater_->set_printer_technology(ptFFF);
     }
-    else
+    else {
         load_current_presets();
+        // Fork (config-backup): back up after preset files were saved / deleted from now on.
+        ConfigBackup::install_preset_save_trigger();
+    }
 
     // Save the active profiles as a "saved into project".
     update_saved_preset_from_current_preset();
@@ -2724,6 +2734,8 @@ wxMenu* GUI_App::get_config_menu(MainFrame* main_frame)
         local_menu->Append(config_id_base + ConfigMenuWizard, config_wizard_name + dots, config_wizard_tooltip);
         local_menu->Append(config_id_base + ConfigMenuSnapshots, _L("&Configuration Snapshots") + dots, _L("Inspect / activate configuration snapshots"));
         local_menu->Append(config_id_base + ConfigMenuTakeSnapshot, _L("Take Configuration &Snapshot"), _L("Capture a configuration snapshot"));
+        local_menu->Append(config_id_base + ConfigMenuBackupNow, _L("&Back Up Configuration") + dots, _L("Save a backup of all presets, physical printers, vendor profiles and settings into the backup folder"));
+        local_menu->Append(config_id_base + ConfigMenuBackups, _L("Configuration Bac&kups") + dots, _L("Browse, compare and restore configuration backups"));
         local_menu->Append(config_id_base + ConfigMenuUpdateConf, _L("Check for Configuration Updates"), _L("Check for configuration updates"));
         local_menu->Append(config_id_base + ConfigMenuUpdateApp, _L("Check for Application Updates"), _L("Check for new version of application"));
 #if defined(__linux__) && defined(SLIC3R_DESKTOP_INTEGRATION) 
@@ -2785,6 +2797,15 @@ wxMenu* GUI_App::get_config_menu(MainFrame* main_frame)
                         app_config->set("on_snapshot", snapshot->id);
             }
             break;
+        case ConfigMenuBackupNow:
+            ConfigBackupDialog::backup_now(mainframe);
+            break;
+        case ConfigMenuBackups:
+        {
+            ConfigBackupDialog dlg(mainframe);
+            dlg.ShowModal();
+            break;
+        }
         case ConfigMenuSnapshots:
             if (check_and_save_current_preset_changes(_L("Loading a configuration snapshot"), "", false)) {
                 std::string on_snapshot;

@@ -46,6 +46,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BitmapCache.hpp
     GUI/ConfigSnapshotDialog.cpp
     GUI/ConfigSnapshotDialog.hpp
+    GUI/ConfigBackupDialog.cpp
+    GUI/ConfigBackupDialog.hpp
     GUI/3DScene.cpp
     GUI/3DScene.hpp
     GUI/format.hpp
@@ -223,6 +225,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/ImGuiPureWrap.cpp
     Config/Snapshot.cpp
     Config/Snapshot.hpp
+    Config/ConfigBackup.cpp
+    Config/ConfigBackup.hpp
     Config/Version.cpp
     Config/Version.hpp    
     Utils/ASCIIFolding.cpp
