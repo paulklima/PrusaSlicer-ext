@@ -105,6 +105,7 @@ add nothing on this topic (`notes/theory.md` §12).
 | version_2.9.6 | implement v1 | theory reviewed and amended, plan reviewed in three rounds; started 2026-10-15 |
 | version_2.9.6 | rename in the UI | "Smart painting" → "Support planner (layer analysis)", "smart paint" → "planned support", clearer field names (2026-10-19): "smart" is taken by upstream's Smart fill; id, branch and code names unchanged |
 | version_2.9.6 | release v1 | host tests passed; shipped in `v2.9.6+ext-v1.1.0` (2026-11-01) |
+| version_2.9.7 | keep | ported from `v2.9.6+ext-v1.0.0` (own commits only), no conflicts |
 
 ## Notes
 
