@@ -31,7 +31,12 @@ and restored.
   `print sla_print filament sla_material printer physical_printer vendor`.
 - **Secrets are redacted**: `printhost_apikey` and plain-text `printhost_password` are replaced
   with `<redacted>` (`stored` = keyring reference is kept). On restore the current value of the
-  same file is put back, otherwise the value becomes empty.
+  same file is put back, else a value remembered in `<data_dir>/config_backup_secrets.ini`
+  (mode 0600, never backed up; every restore stores the current secrets there, so restoring an
+  old backup that drops a printer and then the "before restore" backup keeps its API key),
+  otherwise the value becomes empty.
+- Every zip is written as `*.zip.tmp`, read back and compared with the source files, and only
+  then renamed (a full disk truncates zips silently).
 
 ### Triggers
 
@@ -63,9 +68,12 @@ version, reason, comment, size) with:
 - **Compare presets**: opens a read-only *Compare Presets* dialog with the backup loaded on one
   side and the current configuration (or the second selected backup) on the other — option-level
   diff using the existing upstream dialog.
-- **Restore**: asks to save unsaved changes, takes a `before-restore` backup, replaces the preset
-  and vendor files, restores preset selections and installed vendors (optionally all application
-  preferences) and reloads the presets.
+- **Restore**: asks to save unsaved changes (warns if the backup is from a newer PrusaSlicer),
+  takes a `before-restore` backup, replaces the preset and vendor files, restores preset
+  selections, installed vendors and materials (optionally all application preferences except
+  `version`, `on_snapshot` and `config_backup_*`) and reloads the presets.
+  - Writing fails → the previous files (held in memory) are written back.
+  - Loading the restored presets fails → the `before-restore` backup is restored and loaded.
 
 ### Code
 
@@ -83,6 +91,14 @@ version, reason, comment, size) with:
     `load_system_presets()`.
   - `UnsavedChangesDialog.{hpp,cpp}` — `DiffPresetDialog` constructor for two given bundles
     (read-only, own column labels, presets looked up per side).
+
+### Known limitations
+
+- *Compare presets* uses the option search of the running app; comparing presets of the other
+  printer technology (SLA vs FFF) shows "different" with an empty list (same as upstream).
+- A preset saved in the save-changes prompt when closing the app gets no `preset-save` backup
+  (the debounced backup would run after the event loop ended); the next start does not need it.
+- Lowering *Keep automatic backups* deletes the surplus at the next automatic backup.
 
 ### Bump notes
 

@@ -278,7 +278,27 @@ static FileMap read_data_dir(bool do_redact, int *redacted)
     return files;
 }
 
-// Stable FNV-1a hash over the preset / vendor files (PrusaSlicer.ini excluded, it changes all the time).
+// Sections of PrusaSlicer.ini that belong to the configuration (installed printers / materials,
+// preset selection). The rest (window positions, recent files, ...) changes all the time.
+static std::string stable_app_config_part(const std::string &content)
+{
+    std::istringstream ss(content);
+    std::string        line, out;
+    bool               take = false;
+    while (std::getline(ss, line)) {
+        if (! line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (! line.empty() && line.front() == '[') {
+            const std::string section = line.substr(1, line.find(']') == std::string::npos ? std::string::npos : line.find(']') - 1);
+            take = section == "presets" || section == "filaments" || section == "sla_materials" || boost::starts_with(section, "vendor:");
+        }
+        if (take)
+            out += line + "\n";
+    }
+    return out;
+}
+
+// Stable FNV-1a hash over the preset / vendor files and the configuration part of PrusaSlicer.ini.
 static std::string content_hash(const FileMap &files)
 {
     uint64_t h   = 1469598103934665603ULL;
@@ -291,7 +311,10 @@ static std::string content_hash(const FileMap &files)
         h *= 1099511628211ULL;
     };
     for (const auto &[path, content] : files)
-        if (path != APP_CONFIG_FILE && path != MANIFEST_FILE) {
+        if (path == APP_CONFIG_FILE) {
+            add(path);
+            add(stable_app_config_part(content));
+        } else if (path != MANIFEST_FILE) {
             add(path);
             add(content);
         }
@@ -390,7 +413,7 @@ static bool read_manifest(const std::string &zip_path, BackupInfo &info)
     return true;
 }
 
-// Backup zip files of a directory, newest first (by file name, which starts with the time stamp).
+// Backup zip files of a directory, newest first (modification time, then file name).
 static std::vector<fs::path> backup_files(const std::string &dir)
 {
     std::vector<fs::path>     files;
@@ -402,7 +425,15 @@ static std::vector<fs::path> backup_files(const std::string &dir)
         if (boost::starts_with(name, FILE_PREFIX) && boost::iends_with(name, ".zip") && fs::is_regular_file(entry.path(), ec))
             files.push_back(entry.path());
     }
-    std::sort(files.begin(), files.end(), [](const fs::path &a, const fs::path &b) { return a.filename().string() > b.filename().string(); });
+    std::vector<std::pair<std::time_t, fs::path>> sorted;
+    for (const fs::path &p : files)
+        sorted.emplace_back(fs::last_write_time(p, ec), p);
+    std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
+        return a.first != b.first ? a.first > b.first : a.second.filename().string() > b.second.filename().string();
+    });
+    files.clear();
+    for (auto &[t, p] : sorted)
+        files.push_back(std::move(p));
     return files;
 }
 
@@ -510,25 +541,33 @@ CreateResult create_backup(const AppConfig &app_config, Reason reason, const std
     const fs::path tmp_path = path.string() + ".tmp";
 
     try {
-        Zipper zipper(tmp_path.string(), Zipper::FAST_COMPRESSION);
-        const std::string manifest = make_manifest(info);
-        zipper.add_entry(MANIFEST_FILE, manifest.data(), manifest.size());
-        for (const auto &[name, content] : files)
-            zipper.add_entry(name, content.data(), content.size());
-        zipper.finalize();
+        {
+            Zipper zipper(tmp_path.string(), Zipper::FAST_COMPRESSION);
+            const std::string manifest = make_manifest(info);
+            zipper.add_entry(MANIFEST_FILE, manifest.data(), manifest.size());
+            for (const auto &[name, content] : files)
+                zipper.add_entry(name, content.data(), content.size());
+            zipper.finalize();
+        } // closes the file
+        // Read the zip back: a full disk may truncate it without any error while writing.
+        BackupInfo written_info;
+        if (read_backup(tmp_path.string(), &written_info) != files || written_info.content_hash != info.content_hash)
+            throw Slic3r::RuntimeError("Verification of the written backup failed: " + tmp_path.string());
+        fs::rename(tmp_path, path);
     } catch (...) {
         boost::system::error_code ec;
         fs::remove(tmp_path, ec);
         throw;
     }
-    fs::rename(tmp_path, path);
 
     BOOST_LOG_TRIVIAL(info) << "Config backup created: " << path.string() << " (" << info.reason << ")";
     result.created = true;
     result.path    = path.string();
 
     try {
-        prune_backups(app_config);
+        // Only automatic backups prune; never while a manual / restore backup is taken.
+        if (is_pruned_reason(info.reason))
+            prune_backups(app_config);
     } catch (const std::exception &ex) {
         BOOST_LOG_TRIVIAL(error) << "Config backup: pruning failed: " << ex.what();
     }
@@ -581,6 +620,67 @@ void load_backup_into_bundle(const std::string &zip_path, PresetBundle &bundle)
     bundle.load_presets(config, ForwardCompatibilitySubstitutionRule::EnableSilent, PresetBundle::PresetPreferences(), extracted.dir.string());
 }
 
+// Secrets of printer / physical printer files seen during restores, so that a restore which
+// removes a printer and a later restore of the "before restore" backup (redacted) do not lose
+// them. Lives in the data directory, never included in backups.
+static const char *const SECRETS_FILE = "config_backup_secrets.ini";
+using SecretStore = std::map<std::string, std::map<std::string, std::string>>;
+
+static SecretStore load_secret_store()
+{
+    SecretStore     store;
+    const fs::path  path = fs::path(data_dir()) / SECRETS_FILE;
+    if (! fs::exists(path))
+        return store;
+    std::istringstream ss(read_file(path));
+    std::string        line, section, key, value;
+    while (std::getline(ss, line)) {
+        if (! line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (! line.empty() && line.front() == '[' && line.back() == ']')
+            section = line.substr(1, line.size() - 2);
+        else if (! section.empty() && split_ini_line(line, key, value) && is_secret_key(key) && ! value.empty() && value != REDACTED)
+            store[section][key] = value;
+    }
+    return store;
+}
+
+static void save_secret_store(const SecretStore &store)
+{
+    std::string content = "# Secrets of printers for restoring configuration backups, never part of a backup.\n";
+    for (const auto &[section, values] : store) {
+        content += "[" + section + "]\n";
+        for (const auto &[key, value] : values)
+            content += key + " = " + value + "\n";
+    }
+    const fs::path path = fs::path(data_dir()) / SECRETS_FILE;
+    write_file(path, content);
+    boost::system::error_code ec;
+    fs::permissions(path, fs::owner_read | fs::owner_write, ec);
+}
+
+// Write back the files read before a failed restore. Returns error messages, empty on success.
+static std::string rollback_files(const FileMap &current)
+{
+    std::string     errors;
+    const fs::path  root(data_dir());
+    boost::system::error_code ec;
+    for (const char *subdir : SUBDIRS)
+        for (const fs::directory_entry &entry : fs::directory_iterator(root / subdir, ec))
+            if (Slic3r::is_ini_file(entry))
+                fs::remove(entry.path(), ec);
+    for (const auto &[name, content] : current) {
+        if (name == APP_CONFIG_FILE)
+            continue;
+        try {
+            write_file(root / fs::path(name), content);
+        } catch (const std::exception &ex) {
+            errors += std::string(ex.what()) + "\n";
+        }
+    }
+    return errors;
+}
+
 void restore_backup(const std::string &zip_path, AppConfig &app_config, bool restore_preferences)
 {
     const FileMap files = read_backup(zip_path);
@@ -610,24 +710,49 @@ void restore_backup(const std::string &zip_path, AppConfig &app_config, bool res
             throw Slic3r::RuntimeError(std::string("Cannot read ") + APP_CONFIG_FILE + " of the backup: " + err);
     }
 
-    // Replace the preset and vendor files.
+    // Remember the current secrets (they survive even if the restore removes a printer).
+    SecretStore secrets = load_secret_store();
+    for (const auto &[name, content] : current)
+        if (is_secret_file(name))
+            for (const auto &[key, value] : secret_values(content))
+                if (! value.empty() && value != REDACTED)
+                    secrets[name][key] = value;
+    save_secret_store(secrets);
+
+    // Replace the preset and vendor files, put the old ones back on any error.
     const fs::path root(data_dir());
-    for (const char *subdir : SUBDIRS) {
-        const fs::path dir = root / subdir;
-        fs::create_directories(dir);
-        for (const fs::directory_entry &entry : fs::directory_iterator(dir))
-            if (Slic3r::is_ini_file(entry))
-                fs::remove(entry.path());
-    }
-    for (const auto &[name, content] : files) {
-        if (name == APP_CONFIG_FILE)
-            continue;
-        std::string data = content;
-        if (is_secret_file(name)) {
-            auto it = current.find(name);
-            data    = unredact(data, it == current.end() ? std::map<std::string, std::string>() : secret_values(it->second));
+    try {
+        for (const char *subdir : SUBDIRS) {
+            const fs::path dir = root / subdir;
+            fs::create_directories(dir);
+            for (const fs::directory_entry &entry : fs::directory_iterator(dir))
+                if (Slic3r::is_ini_file(entry))
+                    fs::remove(entry.path());
         }
-        write_file(root / fs::path(name), data);
+        for (const auto &[name, content] : files) {
+            if (name == APP_CONFIG_FILE)
+                continue;
+            std::string data = content;
+            if (is_secret_file(name)) {
+                // Current file first, then the remembered secrets.
+                std::map<std::string, std::string> known;
+                if (auto it = secrets.find(name); it != secrets.end())
+                    known = it->second;
+                if (auto it = current.find(name); it != current.end())
+                    for (const auto &[key, value] : secret_values(it->second))
+                        if (! value.empty() && value != REDACTED)
+                            known[key] = value;
+                data = unredact(data, known);
+            }
+            write_file(root / fs::path(name), data);
+        }
+    } catch (const std::exception &ex) {
+        const std::string rollback_errors = rollback_files(current);
+        BOOST_LOG_TRIVIAL(error) << "Config backup: restore of " << zip_path << " failed: " << ex.what() << "; rollback: "
+                                 << (rollback_errors.empty() ? "ok" : rollback_errors);
+        throw Slic3r::RuntimeError(std::string(ex.what()) + "\n\n" +
+            (rollback_errors.empty() ? std::string("The previous configuration files were put back.") :
+                                       "Putting back the previous configuration files failed too:\n" + rollback_errors));
     }
 
     // Application settings.
@@ -636,14 +761,16 @@ void restore_backup(const std::string &zip_path, AppConfig &app_config, bool res
             for (const auto &section : backup_tree) {
                 if (section.second.empty()) {
                     const std::string &key = section.first;
-                    if (key != "version" && key != KEY_LAST_VERSION && ! section.second.data().empty())
+                    if (key != "version" && key != "on_snapshot" && ! boost::starts_with(key, "config_backup_") && ! section.second.data().empty())
                         app_config.set(key, section.second.data());
                 } else if (! boost::starts_with(section.first, "vendor:") && backup_config->has_section(section.first))
                     app_config.set_section(section.first, backup_config->get_section(section.first));
             }
         }
-        if (backup_config->has_section("presets"))
-            app_config.set_section("presets", backup_config->get_section("presets"));
+        // Preset selection and installed materials belong to the configuration.
+        for (const char *section : { "presets", "filaments", "sla_materials" })
+            if (backup_config->has_section(section))
+                app_config.set_section(section, backup_config->get_section(section));
         app_config.set_vendors(*backup_config);
     }
     // The configuration is not a snapshot anymore.
