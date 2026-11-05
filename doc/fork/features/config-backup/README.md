@@ -121,3 +121,10 @@ new preset write / delete paths in `Preset.cpp` call `notify_preset_files_change
    physical printers still have their API keys.
 5. Edit `config_backup_last_version` in `PrusaSlicer.ini` to `0.0.0`, start → a
    `before-update` backup named with `0.0.0` is created before anything else.
+
+## Decision log
+
+| Base | Decision | Reason |
+|---|---|---|
+| version_2.9.6 | implement, release | external backups before moving to a new upstream base; released in `v2.9.6+ext-v1.2.0` |
+| version_2.9.7 | keep | ported from `v2.9.6+ext-v1.1.0` (own commits only), no conflicts; upstream 2.9.7 has no backup feature |
