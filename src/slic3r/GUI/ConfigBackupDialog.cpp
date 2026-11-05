@@ -22,6 +22,8 @@
 
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Semver.hpp"
+#include "libslic3r/libslic3r.h"
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
@@ -64,6 +66,15 @@ static wxString size_label(uintmax_t size)
     if (size >= 1024 * 1024)
         return wxString::Format("%.1f MB", double(size) / (1024. * 1024.));
     return wxString::Format("%.0f kB", double(size) / 1024.);
+}
+
+// Written by a newer PrusaSlicer than the running one (upstream version part).
+static bool is_from_newer_version(const CB::BackupInfo &info)
+{
+    const std::string v = info.app_version.substr(0, info.app_version.find('+'));
+    const auto backup  = Semver::parse(v);
+    const auto running = Semver::parse(SLIC3R_VERSION);
+    return backup && running && *backup > *running;
 }
 
 static wxString backup_label(const CB::BackupInfo &info)
@@ -346,8 +357,11 @@ void ConfigBackupDialog::on_restore()
         GUI::format_wxstr(_L("Restore the configuration backup %1%?"), backup_label(info)) + "\n\n" +
         _L("All print, filament, SLA and printer presets, physical printers and vendor profiles are replaced by the ones of the backup, "
            "the preset selection and installed printers are restored. A backup of the current configuration is taken first.") + "\n\n" +
-        _L("API keys and passwords are not stored in backups; the current values of physical printers with the same name are kept."),
-        _L("Restore configuration backup"), wxYES_NO | wxICON_QUESTION);
+        _L("API keys and passwords are not stored in backups; the current values of physical printers with the same name are kept.") +
+        (is_from_newer_version(info) ?
+            "\n\n" + GUI::format_wxstr(_L("Warning: this backup was written by a newer PrusaSlicer (%1%). Its profiles may not load in this version."),
+                                        from_u8(info.app_version)) : wxString()),
+        _L("Restore configuration backup"), wxYES_NO | (is_from_newer_version(info) ? wxICON_WARNING : wxICON_QUESTION));
     confirm.ShowCheckBox(_L("Also restore all application preferences"), false);
     confirm.SetYesNoLabels(_L("Restore"), _L("Cancel"));
     if (confirm.ShowModal() != wxID_YES)
@@ -355,39 +369,66 @@ void ConfigBackupDialog::on_restore()
     const bool restore_preferences = confirm.IsCheckBoxChecked();
 
     CB::suppress_preset_save_trigger(true);
+    std::string before_path;
     try {
-        try {
-            if (app.app_config->dirty())
-                app.app_config->save();
-            CB::create_backup(*app.app_config, CB::Reason::BeforeRestore, "before restoring " + info.file_name, false);
-        } catch (const std::exception &ex) {
-            RichMessageDialog dlg(this, _L("Backing up the current configuration failed.") + "\n\n" + from_u8(ex.what()) + "\n\n" +
-                                  _L("Restore anyway?"), _L("PrusaSlicer error"), wxYES_NO);
-            dlg.SetYesNoLabels(_L("Restore"), _L("Cancel"));
-            if (dlg.ShowModal() != wxID_YES) {
-                CB::suppress_preset_save_trigger(false);
-                return;
-            }
+        if (app.app_config->dirty())
+            app.app_config->save();
+        before_path = CB::create_backup(*app.app_config, CB::Reason::BeforeRestore, "before restoring " + info.file_name, false).path;
+    } catch (const std::exception &ex) {
+        RichMessageDialog dlg(this, _L("Backing up the current configuration failed.") + "\n\n" + from_u8(ex.what()) + "\n\n" +
+                              _L("Restore anyway?"), _L("PrusaSlicer error"), wxYES_NO);
+        dlg.SetYesNoLabels(_L("Restore"), _L("Cancel"));
+        if (dlg.ShowModal() != wxID_YES) {
+            CB::suppress_preset_save_trigger(false);
+            return;
         }
+    }
+
+    // Load the presets of the data directory into the GUI (as after a snapshot restore).
+    auto reload_presets = [&app]() {
+        if (PresetsConfigSubstitutions subs = app.preset_bundle->load_presets(*app.app_config, ForwardCompatibilitySubstitutionRule::Enable);
+            ! subs.empty())
+            show_substitutions_info(subs);
+        app.load_current_presets();
+        if (app.plater())
+            app.plater()->set_bed_shape();
+    };
+
+    try {
         {
             wxBusyCursor wait;
+            // Puts the previous files back itself if writing fails.
             CB::restore_backup(info.path, *app.app_config, restore_preferences);
             app.app_config->save();
-            if (PresetsConfigSubstitutions subs = app.preset_bundle->load_presets(*app.app_config, ForwardCompatibilitySubstitutionRule::Enable);
-                ! subs.empty())
-                show_substitutions_info(subs);
-            app.load_current_presets();
-            if (app.plater())
-                app.plater()->set_bed_shape();
+            reload_presets();
         }
         CB::suppress_preset_save_trigger(false);
         MessageDialog(this, _L("The configuration backup was restored.") +
                       (restore_preferences ? "\n\n" + _L("Some preferences take effect after restarting PrusaSlicer.") : wxString()),
                       _L("Restore configuration backup"), wxOK | wxICON_INFORMATION).ShowModal();
     } catch (const std::exception &ex) {
+        wxString msg = _L("Restoring the configuration backup failed.") + "\n\n" + from_u8(ex.what());
+        // Go back to the configuration before the restore and bring the GUI in sync with the files.
+        if (! before_path.empty()) {
+            try {
+                wxBusyCursor wait;
+                CB::restore_backup(before_path, *app.app_config, false);
+                app.app_config->save();
+                reload_presets();
+                msg += "\n\n" + _L("The configuration from before the restore was put back.");
+            } catch (const std::exception &ex2) {
+                msg += "\n\n" + _L("Putting back the configuration from before the restore failed too") + ": " + from_u8(ex2.what()) + "\n" +
+                       GUI::format_wxstr(_L("It is available as backup %1%."), from_u8(before_path));
+            }
+        } else {
+            try {
+                reload_presets();
+            } catch (const std::exception &ex2) {
+                msg += "\n\n" + from_u8(ex2.what());
+            }
+        }
         CB::suppress_preset_save_trigger(false);
-        show_error(this, _L("Restoring the configuration backup failed.") + "\n\n" + from_u8(ex.what()) + "\n\n" +
-                   _L("The configuration before the restore is available as backup \"Before restore\"."));
+        show_error(this, msg);
     }
     reload_list();
 }
