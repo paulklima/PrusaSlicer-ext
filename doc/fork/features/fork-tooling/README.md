@@ -137,3 +137,4 @@ own warning rounds — re-check part 1 at the 3.x bump.
 | Upstream base | Decision | Reason |
 |---|---|---|
 | version_2.9.6 | keep | fork-only; tooling, workflow, warning cleanup and build identity are one feature |
+| version_2.9.7 | keep | fork-only; rebased without conflicts |
