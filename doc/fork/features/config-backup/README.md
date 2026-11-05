@@ -17,6 +17,9 @@ vendor profiles, `PrusaSlicer.ini`) lives in the data directory. Upstream only o
 to a new upstream base we want a real, external backup with a history that can be compared
 and restored.
 
+**Status: released in `v2.9.6+ext-v1.2.0` (2026-11-05).** Host-tested by the maintainer
+(2026-11-05).
+
 ## Design
 
 ### Backup archive
