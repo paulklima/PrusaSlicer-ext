@@ -22,7 +22,8 @@ and restored.
 ### Backup archive
 
 - One **zip per backup** in a backup folder outside the data directory
-  (preference, default `<data_dir>-backups`, e.g. `~/.config/PrusaSlicer-backups`).
+  (default `<data_dir>-backups`, e.g. `~/.config/PrusaSlicer-backups`; changeable in the backup
+  dialog, folders inside the data directory are refused).
 - File name contains time, the PrusaSlicer (fork) version the configuration belongs to and the
   reason, e.g. `PrusaSlicer-config_2026-11-05_143012_2.9.6+ext-v1.1.0_manual.zip`.
 - Contents: `backup.ini` (manifest: format, version, fork id, reason, comment, created, source
@@ -44,16 +45,21 @@ and restored.
 
 Automatic backups are skipped when the preset content is identical to the newest backup
 (content hash over the preset/vendor files). Only `preset-save` and `before-config-update`
-backups are pruned (keep the newest N, preference, default 100); manual, `before-update` and
+backups are pruned (keep the newest N, default 100, 0 = all); manual, `before-update` and
 `before-restore` backups are never deleted automatically.
+
+Settings (`PrusaSlicer.ini`, edited in the backup dialog): `config_backup_dir`,
+`config_backup_keep`, `config_backup_on_preset_save`; `config_backup_last_version` is the
+version of the last run.
 
 ### Backup dialog (Configuration → *Configuration Backups…*)
 
-List of all backups (date, version, reason, comment, size) with:
+Backup folder (change / open), the automatic-backup settings and the list of all backups (date,
+version, reason, comment, size) with:
 
-- **Back up now**, **Open folder**, **Delete**.
-- **Changes**: file-level summary of the selected backup against the current configuration (or
-  of two selected backups): added / removed / changed presets per category.
+- **Back up now**, **Delete**.
+- **Changes** (shown on selection): file-level summary of the selected backup against the current
+  configuration (or of two selected backups): added / removed / changed presets per category.
 - **Compare presets**: opens a read-only *Compare Presets* dialog with the backup loaded on one
   side and the current configuration (or the second selected backup) on the other — option-level
   diff using the existing upstream dialog.
@@ -64,13 +70,25 @@ List of all backups (date, version, reason, comment, size) with:
 ### Code
 
 - `src/slic3r/Config/ConfigBackup.{hpp,cpp}` — zip writing / reading, manifest, redaction,
-  pruning, listing, restore, extraction for compare (no wx dependency beyond `GUI_App` access in
-  the trigger helpers).
-- `src/slic3r/GUI/ConfigBackupDialog.{hpp,cpp}` — the dialog.
-- Small hooks: `GUI_App.cpp` (startup trigger, menu, preset-save debounce), `Snapshot.cpp`
-  (`before-config-update`), `Preset.cpp` (file-changed notification), `Tab.cpp` (rename),
-  `PresetBundle` (`load_presets` from another directory), `UnsavedChangesDialog`
-  (`DiffPresetDialog` with external bundles), `Preferences.cpp` / `AppConfig.cpp` (settings).
+  pruning, listing, restore, loading a backup into a `PresetBundle`, and the GUI trigger helpers.
+- `src/slic3r/GUI/ConfigBackupDialog.{hpp,cpp}` — the dialog and *Back Up Configuration…*.
+- Small hooks (marked `Fork (config-backup)` / `fork: config-backup`):
+  - `GUI_App.{hpp,cpp}` — menu entries, startup trigger in `on_init_inner()` right before
+    `check_older_app_config()`, preset-save trigger installed after `load_current_presets()`.
+  - `Snapshot.cpp` — `take_config_snapshot_report_error` / `_cancel_on_error` back up first
+    (covers updater, wizard, rollback, older-config import).
+  - `libslic3r/Preset.{hpp,cpp}` — `set_preset_files_changed_callback()`, notified from
+    `Preset::save`, `PhysicalPrinter::save`, preset / physical-printer deletion; `Tab.cpp` on rename.
+  - `libslic3r/PresetBundle.{hpp,cpp}` — optional `presets_dir` for `load_presets()` /
+    `load_system_presets()`.
+  - `UnsavedChangesDialog.{hpp,cpp}` — `DiffPresetDialog` constructor for two given bundles
+    (read-only, own column labels, presets looked up per side).
+
+### Bump notes
+
+Hooks are small and anchored on stable functions; on an upstream bump check that the startup
+order in `GUI_App::on_init_inner()` still has no data-directory writes before the hook, and that
+new preset write / delete paths in `Preset.cpp` call `notify_preset_files_changed()`.
 
 ## How to test
 
