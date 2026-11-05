@@ -3,6 +3,7 @@
 ///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
 ///|/
 #include "Snapshot.hpp"
+#include "ConfigBackup.hpp"
 
 #include <time.h>
 
@@ -581,6 +582,8 @@ SnapshotDB& SnapshotDB::singleton()
 
 const Snapshot* take_config_snapshot_report_error(const AppConfig &app_config, Snapshot::Reason reason, const std::string &comment)
 {
+    // Fork (config-backup): external backup before the configuration changes.
+    ConfigBackup::backup_before_config_update(app_config, reason_string(reason), false);
     try {
         return &SnapshotDB::singleton().take_snapshot(app_config, reason, comment);
     } catch (std::exception &err) {
@@ -592,6 +595,9 @@ const Snapshot* take_config_snapshot_report_error(const AppConfig &app_config, S
 
 bool take_config_snapshot_cancel_on_error(const AppConfig &app_config, Snapshot::Reason reason, const std::string &comment, const std::string &message, Snapshot const **psnapshot)
 {
+    // Fork (config-backup): external backup before the configuration changes.
+    if (! ConfigBackup::backup_before_config_update(app_config, reason_string(reason), true))
+        return false;
     try {
         const Snapshot *snapshot = &SnapshotDB::singleton().take_snapshot(app_config, reason, comment);
         if (psnapshot)
